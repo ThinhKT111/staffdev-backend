@@ -1,13 +1,11 @@
 // src/users/users.service.ts
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User } from '../entities/user.entity';
+import { Repository, Not, Equal } from 'typeorm';
+import { User, UserRole } from '../entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
-
-import { Not, Equal } from 'typeorm';
 
 @Injectable()
 export class UsersService {
@@ -37,6 +35,12 @@ export class UsersService {
     return user;
   }
 
+  async findByCccd(cccd: string): Promise<User | undefined> {
+    return this.usersRepository.findOne({
+      where: { cccd },
+    });
+  }
+
   async create(createUserDto: CreateUserDto): Promise<User> {
     // Check if user with same cccd, email or phone already exists
     const existingUser = await this.usersRepository.findOne({
@@ -54,6 +58,14 @@ export class UsersService {
     // Hash password
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
     
+    // Map role string to enum
+    let role: UserRole;
+    if (createUserDto.role) {
+      role = createUserDto.role;
+    } else {
+      role = UserRole.EMPLOYEE; // Default role
+    }
+    
     // Create new user
     const user = this.usersRepository.create({
       cccd: createUserDto.cccd,
@@ -61,8 +73,10 @@ export class UsersService {
       email: createUserDto.email,
       phone: createUserDto.phone,
       full_name: createUserDto.fullName,
-      role: createUserDto.role || UserRole.EMPLOYEE,
+      role: role,
       department_id: createUserDto.departmentId,
+      created_at: new Date(),
+      updated_at: new Date(),
     });
     
     await this.usersRepository.save(user);
@@ -79,9 +93,9 @@ export class UsersService {
     if (updateUserDto.email || updateUserDto.phone) {
       const existingUser = await this.usersRepository.findOne({
         where: [
-          { email: updateUserDto.email, user_id: Not(Equal(id)) },
-          { phone: updateUserDto.phone, user_id: Not(id) },
-        ],
+          updateUserDto.email ? { email: updateUserDto.email, user_id: Not(Equal(id)) } : undefined,
+          updateUserDto.phone ? { phone: updateUserDto.phone, user_id: Not(Equal(id)) } : undefined,
+        ].filter(Boolean),
       });
       
       if (existingUser) {
@@ -90,26 +104,32 @@ export class UsersService {
     }
     
     // Update password if provided
+    let password = user.password;
     if (updateUserDto.password) {
-      updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);
+      password = await bcrypt.hash(updateUserDto.password, 10);
+    }
+    
+    // Map role string to enum if provided
+    let role = user.role;
+    if (updateUserDto.role) {
+      role = updateUserDto.role as UserRole;
     }
     
     // Update user
-    const updatedUser = {
-      ...user,
+    Object.assign(user, {
       email: updateUserDto.email || user.email,
       phone: updateUserDto.phone || user.phone,
       full_name: updateUserDto.fullName || user.full_name,
-      role: updateUserDto.role || user.role,
+      role: role,
       department_id: updateUserDto.departmentId || user.department_id,
-      password: updateUserDto.password || user.password,
+      password: password,
       updated_at: new Date(),
-    };
+    });
     
-    await this.usersRepository.save(updatedUser);
+    await this.usersRepository.save(user);
     
     // Remove password from response
-    const { password, ...result } = updatedUser;
+    const { password: _, ...result } = user;
     return result as User;
   }
 

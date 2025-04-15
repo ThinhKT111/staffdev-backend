@@ -2,7 +2,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { TrainingPath } from '../../entities/training-path.entity';
+import { TrainingPath, DurationType } from '../../entities/training-path.entity';
 import { CreateTrainingPathDto } from './dto/create-training-path.dto';
 import { UpdateTrainingPathDto } from './dto/update-training-path.dto';
 
@@ -34,11 +34,21 @@ export class TrainingPathService {
   }
 
   async create(createTrainingPathDto: CreateTrainingPathDto): Promise<TrainingPath> {
+    // Map duration string to enum
+    let duration: DurationType;
+    if (createTrainingPathDto.duration === 'ShortTerm') {
+      duration = DurationType.SHORT_TERM;
+    } else if (createTrainingPathDto.duration === 'LongTerm') {
+      duration = DurationType.LONG_TERM;
+    } else {
+      duration = DurationType.SHORT_TERM; // Default
+    }
+
     const path = this.trainingPathRepository.create({
       title: createTrainingPathDto.title,
       description: createTrainingPathDto.description,
       department_id: createTrainingPathDto.departmentId,
-      duration: createTrainingPathDto.duration,
+      duration: duration,
       created_by: createTrainingPathDto.createdBy,
       total_courses: createTrainingPathDto.totalCourses || 0,
       duration_in_weeks: createTrainingPathDto.durationInWeeks,
@@ -52,19 +62,28 @@ export class TrainingPathService {
   async update(id: number, updateTrainingPathDto: UpdateTrainingPathDto): Promise<TrainingPath> {
     const path = await this.findOne(id);
     
+    // Map duration string to enum if provided
+    let duration = path.duration;
+    if (updateTrainingPathDto.duration) {
+      if (updateTrainingPathDto.duration === 'ShortTerm') {
+        duration = DurationType.SHORT_TERM;
+      } else if (updateTrainingPathDto.duration === 'LongTerm') {
+        duration = DurationType.LONG_TERM;
+      }
+    }
+    
     // Update path
-    const updatedPath = {
-      ...path,
+    Object.assign(path, {
       title: updateTrainingPathDto.title || path.title,
       description: updateTrainingPathDto.description || path.description,
       department_id: updateTrainingPathDto.departmentId !== undefined ? updateTrainingPathDto.departmentId : path.department_id,
-      duration: updateTrainingPathDto.duration || path.duration,
+      duration: duration,
       total_courses: updateTrainingPathDto.totalCourses !== undefined ? updateTrainingPathDto.totalCourses : path.total_courses,
       duration_in_weeks: updateTrainingPathDto.durationInWeeks !== undefined ? updateTrainingPathDto.durationInWeeks : path.duration_in_weeks,
       is_active: updateTrainingPathDto.isActive !== undefined ? updateTrainingPathDto.isActive : path.is_active,
-    };
+    });
     
-    return this.trainingPathRepository.save(updatedPath);
+    return this.trainingPathRepository.save(path);
   }
 
   async remove(id: number): Promise<void> {

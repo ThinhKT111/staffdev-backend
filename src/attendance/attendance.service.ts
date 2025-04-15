@@ -2,10 +2,9 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { Attendance } from '../entities/attendance.entity';
+import { Attendance, AttendanceStatus, LeaveType } from '../entities/attendance.entity';
 import { CheckInDto } from './dto/check-in.dto';
 import { RequestLeaveDto } from './dto/request-leave.dto';
-import { ApproveLeaveDto } from './dto/approve-leave.dto';
 
 @Injectable()
 export class AttendanceService {
@@ -139,10 +138,10 @@ export class AttendanceService {
     // Create new leave request
     const attendance = this.attendanceRepository.create({
       user_id: leaveDto.userId,
-      leave_type: leaveDto.leaveType,
+      leave_type: leaveDto.leaveType as LeaveType,
       leave_date: leaveDate,
       note: leaveDto.reason,
-      status: 'pending',
+      status: AttendanceStatus.PENDING,
     });
     
     return this.attendanceRepository.save(attendance);
@@ -166,7 +165,7 @@ export class AttendanceService {
       throw new BadRequestException('This is not a leave request');
     }
     
-    leave.status = 'rejected';
+    leave.status = AttendanceStatus.REJECTED;
     return this.attendanceRepository.save(leave);
   }
 
@@ -210,7 +209,7 @@ export class AttendanceService {
     });
     
     const leaveDays = records.filter(r => r.leave_type).length;
-    const approvedLeaves = records.filter(r => r.leave_type && r.status === 'approved').length;
+    const approvedLeaves = records.filter(r => r.leave_type && r.status === AttendanceStatus.APPROVED).length;
     
     return {
       workDays,

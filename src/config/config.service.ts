@@ -1,3 +1,4 @@
+// src/config/config.service.ts
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -14,17 +15,17 @@ export class AppConfigService {
   }
 
   get nodeEnv(): string {
-    return this.configService.get('NODE_ENV') || 'development';
+    return this.configService.get<string>('NODE_ENV') || 'development';
   }
 
   get databaseConfig() {
     return {
       type: 'postgres',
-      host: this.configService.get('DB_HOST'),
-      port: parseInt(this.configService.get('DB_PORT'), 10) || 5432,
-      username: this.configService.get('DB_USERNAME'),
-      password: this.configService.get('DB_PASSWORD'),
-      database: this.configService.get('DB_NAME'),
+      host: this.configService.get<string>('DB_HOST') || 'localhost',
+      port: parseInt(this.configService.get<string>('DB_PORT') || '5432', 10),
+      username: this.configService.get<string>('DB_USERNAME') || 'postgres',
+      password: this.configService.get<string>('DB_PASSWORD') || 'password',
+      database: this.configService.get<string>('DB_NAME') || 'staffdev',
       entities: [__dirname + '/../**/*.entity{.ts,.js}'],
       synchronize: this.isDevelopment,
     };
@@ -32,15 +33,15 @@ export class AppConfigService {
 
   get jwtConfig() {
     return {
-      secret: this.configService.get('JWT_SECRET'),
+      secret: this.configService.get<string>('JWT_SECRET') || 'staffdev_secret_key',
       expiresIn: '1d',
     };
   }
 
   get appConfig() {
     return {
-      port: parseInt(this.configService.get('PORT'), 10) || 3000,
-      uploadDir: this.configService.get('UPLOAD_DIR') || 'uploads',
+      port: parseInt(this.configService.get<string>('PORT') || '3000', 10),
+      uploadDir: this.configService.get<string>('UPLOAD_DIR') || 'uploads',
     };
   }
 }

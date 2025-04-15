@@ -1,3 +1,4 @@
+// src/common/filters/http-exception.filter.ts
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Request, Response } from 'express';
 
@@ -18,9 +19,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const exceptionResponse = exception.getResponse();
       
       if (typeof exceptionResponse === 'object' && 'message' in exceptionResponse) {
-        message = exceptionResponse.message;
+        // Chuyển message sang string nếu cần
+        message = Array.isArray(exceptionResponse.message) 
+          ? exceptionResponse.message.join(', ') 
+          : String(exceptionResponse.message);
       } else {
-        message = exceptionResponse.toString();
+        message = String(exceptionResponse);
       }
     } else if (exception instanceof Error) {
       message = exception.message;

@@ -14,6 +14,7 @@ import { LocalStrategy } from './strategies/local.strategy';
   imports: [
     TypeOrmModule.forFeature([User]),
     PassportModule,
+    ConfigModule, // Thêm ConfigModule vào imports
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
