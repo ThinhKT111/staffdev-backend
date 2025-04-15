@@ -7,6 +7,8 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
 
+import { Not, Equal } from 'typeorm';
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -77,7 +79,7 @@ export class UsersService {
     if (updateUserDto.email || updateUserDto.phone) {
       const existingUser = await this.usersRepository.findOne({
         where: [
-          { email: updateUserDto.email, user_id: Not(id) },
+          { email: updateUserDto.email, user_id: Not(Equal(id)) },
           { phone: updateUserDto.phone, user_id: Not(id) },
         ],
       });

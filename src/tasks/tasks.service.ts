@@ -95,7 +95,7 @@ export class TasksService {
   async provideFeedback(id: number, feedbackDto: FeedbackTaskDto): Promise<Task> {
     const task = await this.findOne(id);
     
-    task.status = 'Completed';
+    task.status = TaskStatus.COMPLETED;
     task.score = feedbackDto.score;
     task.feedback = feedbackDto.feedback;
     task.updated_at = new Date();

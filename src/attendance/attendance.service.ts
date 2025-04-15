@@ -155,7 +155,7 @@ export class AttendanceService {
       throw new BadRequestException('This is not a leave request');
     }
     
-    leave.status = 'approved';
+    leave.status = AttendanceStatus.APPROVED;
     return this.attendanceRepository.save(leave);
   }
 
