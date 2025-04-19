@@ -47,10 +47,12 @@ export class UserCoursesService {
   }
 
   async findByUserAndCourse(userId: number, courseId: number): Promise<UserCourse | undefined> {
-    return this.userCourseRepository.findOne({
+    const userCourse = await this.userCourseRepository.findOne({
       where: { user_id: userId, course_id: courseId },
       relations: ['user', 'course'],
     });
+    
+    return userCourse || undefined;
   }
 
   async enrollCourse(enrollCourseDto: EnrollCourseDto): Promise<UserCourse> {

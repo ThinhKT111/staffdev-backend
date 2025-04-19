@@ -36,9 +36,11 @@ export class UsersService {
   }
 
   async findByCccd(cccd: string): Promise<User | undefined> {
-    return this.usersRepository.findOne({
+    const user = await this.usersRepository.findOne({
       where: { cccd },
     });
+    
+    return user || undefined;
   }
 
   async create(createUserDto: CreateUserDto): Promise<User> {
@@ -91,15 +93,30 @@ export class UsersService {
     
     // Check if email or phone is being updated and already exists for another user
     if (updateUserDto.email || updateUserDto.phone) {
-      const existingUser = await this.usersRepository.findOne({
-        where: [
-          updateUserDto.email ? { email: updateUserDto.email, user_id: Not(Equal(id)) } : undefined,
-          updateUserDto.phone ? { phone: updateUserDto.phone, user_id: Not(Equal(id)) } : undefined,
-        ].filter(Boolean),
-      });
+      const conditions = [];
       
-      if (existingUser) {
-        throw new ConflictException('Email or phone already in use by another user');
+      if (updateUserDto.email) {
+        conditions.push({ 
+          email: updateUserDto.email, 
+          user_id: Not(Equal(id)) 
+        });
+      }
+      
+      if (updateUserDto.phone) {
+        conditions.push({ 
+          phone: updateUserDto.phone, 
+          user_id: Not(Equal(id)) 
+        });
+      }
+      
+      if (conditions.length > 0) {
+        const existingUser = await this.usersRepository.findOne({
+          where: conditions,
+        });
+        
+        if (existingUser) {
+          throw new ConflictException('Email or phone already in use by another user');
+        }
       }
     }
     
