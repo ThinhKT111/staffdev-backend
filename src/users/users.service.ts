@@ -93,29 +93,29 @@ export class UsersService {
     
     // Check if email or phone is being updated and already exists for another user
     if (updateUserDto.email || updateUserDto.phone) {
-      const conditions = [];
-      
       if (updateUserDto.email) {
-        conditions.push({ 
-          email: updateUserDto.email, 
-          user_id: Not(Equal(id)) 
+        const existingUserWithEmail = await this.usersRepository.findOne({
+          where: { 
+            email: updateUserDto.email,
+            user_id: Not(id)
+          },
         });
+        
+        if (existingUserWithEmail) {
+          throw new ConflictException('Email already in use by another user');
+        }
       }
       
       if (updateUserDto.phone) {
-        conditions.push({ 
-          phone: updateUserDto.phone, 
-          user_id: Not(Equal(id)) 
-        });
-      }
-      
-      if (conditions.length > 0) {
-        const existingUser = await this.usersRepository.findOne({
-          where: conditions,
+        const existingUserWithPhone = await this.usersRepository.findOne({
+          where: { 
+            phone: updateUserDto.phone,
+            user_id: Not(id)
+          },
         });
         
-        if (existingUser) {
-          throw new ConflictException('Email or phone already in use by another user');
+        if (existingUserWithPhone) {
+          throw new ConflictException('Phone already in use by another user');
         }
       }
     }
