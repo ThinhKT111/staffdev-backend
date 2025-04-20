@@ -17,7 +17,7 @@ export class ProfilesController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
   findAll() {
-    return this.profilesService.findAll();
+    return this.profilesService.findAll(); // Đảm bảo kiểu trả về được hiểu là Profile[]
   }
 
   @Get(':id')

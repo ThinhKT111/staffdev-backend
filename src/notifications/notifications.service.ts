@@ -5,12 +5,14 @@ import { Repository } from 'typeorm';
 import { Notification, NotificationType } from '../entities/notification.entity';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { MarkAsReadDto } from './dto/mark-as-read.dto';
+import { NotificationsGateway } from './notifications.gateway';
 
 @Injectable()
 export class NotificationsService {
   constructor(
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
+    private notificationsGateway: NotificationsGateway,
   ) {}
 
   async findAll(): Promise<Notification[]> {
@@ -66,7 +68,15 @@ export class NotificationsService {
       created_at: new Date(),
     });
     
-    return this.notificationRepository.save(notification);
+    const savedNotification = await this.notificationRepository.save(notification);
+    
+    // Send realtime notification
+    this.notificationsGateway.sendNotificationToUser(
+      createNotificationDto.userId,
+      savedNotification
+    );
+    
+    return savedNotification;
   }
 
   async markAsRead(id: number, markAsReadDto: MarkAsReadDto): Promise<Notification> {

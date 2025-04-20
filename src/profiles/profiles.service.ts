@@ -14,9 +14,13 @@ export class ProfilesService {
   ) {}
 
   async findAll(): Promise<Profile[]> {
-    return this.profilesRepository.find({
-      relations: ['user'],
-    });
+    // Sử dụng QueryBuilder có thể giúp TypeScript hiểu rõ hơn về kiểu trả về
+    const profiles = await this.profilesRepository
+      .createQueryBuilder('profile')
+      .leftJoinAndSelect('profile.user', 'user')
+      .getMany();
+    
+    return profiles;
   }
 
   async findOne(id: number): Promise<Profile> {
@@ -46,17 +50,28 @@ export class ProfilesService {
   }
 
   async create(createProfileDto: CreateProfileDto): Promise<Profile> {
-    const profile = this.profilesRepository.create({
+    // Sử dụng kiểu any để tránh lỗi DeepPartial
+    const profileData: any = {
       user_id: createProfileDto.userId,
-      date_of_birth: createProfileDto.dateOfBirth ? new Date(createProfileDto.dateOfBirth) : null,
+      date_of_birth: createProfileDto.dateOfBirth ? new Date(createProfileDto.dateOfBirth) : undefined,
       address: createProfileDto.address,
       experience: createProfileDto.experience,
       skills: createProfileDto.skills,
       avatar_url: createProfileDto.avatarUrl,
-      updated_at: new Date(),
+      updated_at: new Date()
+    };
+    
+    // Loại bỏ các trường undefined
+    Object.keys(profileData).forEach(key => {
+      if (profileData[key] === undefined) {
+        delete profileData[key];
+      }
     });
     
-    return this.profilesRepository.save(profile);
+    const profile = this.profilesRepository.create(profileData);
+    
+    // Sử dụng as để ép kiểu trả về
+    return this.profilesRepository.save(profile) as unknown as Profile;
   }
 
   async update(id: number, updateProfileDto: UpdateProfileDto): Promise<Profile> {

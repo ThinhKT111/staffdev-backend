@@ -18,6 +18,9 @@ import { SeedModule } from './database/seeders/seed.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SharedModule } from './shared/shared.module';
+import { ProfilesModule } from './profiles/profiles.module';
+import { CacheModule } from '@nestjs/cache-manager';
+import * as redisStore from 'cache-manager-redis-store';
 
 @Module({
   imports: [
@@ -51,6 +54,18 @@ import { SharedModule } from './shared/shared.module';
     NotificationsModule,
     SeedModule,
     SharedModule,
+    ProfilesModule,
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        store: redisStore,
+        host: configService.get('REDIS_HOST', 'localhost'),
+        port: configService.get('REDIS_PORT', 6379),
+        ttl: 60 * 60, // 1 giờ
+      }),
+      inject: [ConfigService],
+    }),
   ],
   controllers: [AppController, DatabaseController],
   providers: [AppService],
