@@ -51,7 +51,7 @@ export class ReportsService {
     const totalRejectedLeaves = attendances.filter(a => a.leave_type && a.status === 'rejected').length;
     
     // Tính toán thống kê theo người dùng
-    const userStats = {};
+    const userStats: Record<number, any> = {};
     
     for (const attendance of attendances) {
       if (attendance.user) {
@@ -122,7 +122,7 @@ export class ReportsService {
     worksheet.addRow(['Chi tiết theo người dùng']);
     worksheet.addRow(['ID', 'Họ tên', 'Phòng ban', 'Số lần điểm danh', 'Số đơn nghỉ phép', 'Giờ tăng ca']);
     
-    reportData.userStatistics.forEach(user => {
+    reportData.userStatistics.forEach((user: any) => {
       worksheet.addRow([
         user.userId,
         user.fullName,

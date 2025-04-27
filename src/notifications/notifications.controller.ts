@@ -8,6 +8,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
 import { BulkCreateNotificationDto } from './dto/bulk-create-notification.dto';
+import { NotificationType } from 'src/entities/notification.entity';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
@@ -26,6 +27,62 @@ export class NotificationsController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.notificationsService.findOne(+id);
+  }
+
+  @Get('unread-count')
+  @UseGuards(JwtAuthGuard)
+  async getUnreadCount(@Request() req): Promise<{ count: number }> {
+    const userId = req.user.userId;
+    const count = await this.notificationsService.getUnreadCount(userId);
+    return { count };
+  }
+
+  @Get('paginated')
+  @UseGuards(JwtAuthGuard)
+  async getPaginated(
+    @Request() req,
+    @Query('page') page: number = 1,
+    @Query('pageSize') pageSize: number = 10
+  ) {
+    const userId = req.user.userId;
+    return this.notificationsService.findByUserPaginated(userId, page, pageSize);
+  }
+
+  @Post('read-multiple')
+  @UseGuards(JwtAuthGuard)
+  async markMultipleAsRead(
+    @Request() req,
+    @Body() { notificationIds }: { notificationIds: number[] }
+  ) {
+    const userId = req.user.userId;
+    await this.notificationsService.markMultipleAsRead(userId, notificationIds);
+    return { success: true };
+  }
+
+  @Get('by-type/:type')
+  @UseGuards(JwtAuthGuard)
+  async getByType(
+    @Request() req,
+    @Param('type') type: string
+  ) {
+    const userId = req.user.userId;
+    let notificationType: NotificationType;
+    
+    switch (type) {
+      case 'task':
+        notificationType = NotificationType.TASK;
+        break;
+      case 'training':
+        notificationType = NotificationType.TRAINING;
+        break;
+      case 'assignment':
+        notificationType = NotificationType.ASSIGNMENT;
+        break;
+      default:
+        notificationType = NotificationType.GENERAL;
+    }
+    
+    return this.notificationsService.findByType(userId, notificationType);
   }
 
   @Post()

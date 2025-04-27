@@ -65,4 +65,29 @@ export class TasksController {
   remove(@Param('id') id: string) {
     return this.tasksService.remove(+id);
   }
+  
+  // Endpoint mới: Lấy tổng quan nhiệm vụ
+  @Get('summary/me')
+  async getMySummary(@Request() req) {
+    await this.tasksService.sendTaskSummary(req.user.userId);
+    return { message: 'Task summary notification has been sent' };
+  }
+  
+  // Endpoint mới: Thông báo deadline sắp đến hạn (cho testing)
+  @Post('notify/upcoming-deadlines')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async notifyUpcomingDeadlines(@Body('hoursThreshold') hoursThreshold: number = 24) {
+    await this.tasksService.notifyUpcomingDeadlines(hoursThreshold);
+    return { message: 'Notifications for upcoming deadlines have been sent' };
+  }
+  
+  // Endpoint mới: Thông báo nhiệm vụ quá hạn (cho testing)
+  @Post('notify/overdue')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async notifyOverdueTasks() {
+    await this.tasksService.notifyOverdueTasks();
+    return { message: 'Notifications for overdue tasks have been sent' };
+  }
 }

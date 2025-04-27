@@ -10,7 +10,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { Document } from '../entities/document.entity';
 import { Profile } from '../entities/profile.entity';
 import { ProfilesService } from '../profiles/profiles.service';
-import { Notification } from '../entities/notification.entity';
+import { Notification, NotificationType } from '../entities/notification.entity';
 
 @Injectable()
 export class AuthService {
@@ -92,7 +92,7 @@ export class AuthService {
       user_id: userId,
       title: 'Đăng nhập thành công',
       content,
-      type: 'General',
+      type: NotificationType.GENERAL,
       is_read: true,
       created_at: new Date()
     });
