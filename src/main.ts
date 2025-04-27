@@ -20,6 +20,9 @@ async function bootstrap() {
   // Enable CORS
   app.enableCors();
   
+  // Set global prefix - Giữ hoặc xóa tùy theo nhu cầu
+  app.setGlobalPrefix('api');
+  
   // Setup Swagger
   setupSwagger(app);
   
