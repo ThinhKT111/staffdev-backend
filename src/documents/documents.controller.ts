@@ -1,5 +1,5 @@
 // src/documents/documents.controller.ts
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile, Res, StreamableFile } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile, Res, StreamableFile, Req } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { createReadStream } from 'fs';
@@ -13,6 +13,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
 import { ConfigService } from '@nestjs/config';
 import { GenerateDocumentDto } from './dto/generate-document.dto';
+import { Request } from 'express';
 
 @Controller('documents')
 @UseGuards(JwtAuthGuard)
@@ -79,7 +80,7 @@ export class DocumentsController {
   createTemplate(
     @Body() createDocumentDto: CreateDocumentDto,
     @UploadedFile() file: Express.Multer.File,
-    @Request() req
+    @Req() req
   ) {
     if (!createDocumentDto.uploadedBy) {
       createDocumentDto.uploadedBy = req.user.userId;
@@ -89,11 +90,10 @@ export class DocumentsController {
   }
 
   @Post('generate/:templateId')
-  @UseInterceptors(FileInterceptor('file'))
   generateFromTemplate(
     @Param('templateId') templateId: string,
     @Body() generateDto: GenerateDocumentDto,
-    @Request() req
+    @Req() req
   ) {
     return this.documentsService.generateFromTemplate(
       +templateId,

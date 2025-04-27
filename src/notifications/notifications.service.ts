@@ -7,13 +7,15 @@ import { CreateNotificationDto } from './dto/create-notification.dto';
 import { MarkAsReadDto } from './dto/mark-as-read.dto';
 import { NotificationsGateway } from './notifications.gateway';
 import { BulkCreateNotificationDto } from './dto/bulk-create-notification.dto';
+import { User } from '../entities/user.entity';
 
 @Injectable()
 export class NotificationsService {
-  userRepository: any;
   constructor(
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
     private notificationsGateway: NotificationsGateway,
   ) {}
 

@@ -2,11 +2,23 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { Task } from '../entities/task.entity';
-import { Attendance } from '../entities/attendance.entity';
+import { Task, TaskStatus } from '../entities/task.entity';
+import { Attendance, AttendanceStatus } from '../entities/attendance.entity';
 import { User } from '../entities/user.entity';
 import { Assignment } from '../entities/assignment.entity';
 import { Course } from '../entities/course.entity';
+
+// Định nghĩa interface để tránh lỗi kiểu
+interface CalendarEvent {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date | null;
+  type: string;
+  status?: any;
+  description: string;
+  userName?: string;
+}
 
 @Injectable()
 export class CalendarService {
@@ -62,7 +74,7 @@ export class CalendarService {
       .getMany();
     
     // Chuyển đổi thành sự kiện lịch
-    const events = [];
+    const events: CalendarEvent[] = [];
     
     // Thêm sự kiện từ nhiệm vụ
     tasks.forEach(task => {
@@ -98,7 +110,7 @@ export class CalendarService {
           end: record.leave_date,
           type: 'leave',
           status: record.status,
-          description: record.note
+          description: record.note || ''
         });
       }
     });
@@ -117,8 +129,8 @@ export class CalendarService {
     
     return {
       userId,
-      userName: user.full_name,
-      department: user.department?.department_name,
+      userName: user?.full_name || 'Unknown',
+      department: user?.department?.department_name || 'Unknown',
       events
     };
   }
@@ -136,20 +148,22 @@ export class CalendarService {
     
     // Gộp tất cả sự kiện
     const allEvents = userCalendars.flatMap(calendar => 
-      calendar.events.map(event => ({
+      calendar.events.map((event: CalendarEvent) => ({
         ...event,
         userName: calendar.userName
       }))
     );
     
     // Lấy thông tin phòng ban
-    const department = await this.userRepository.findOne({
-      where: { department_id: departmentId }
-    });
+    const department = await this.userRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.department', 'department')
+      .where('user.department_id = :departmentId', { departmentId })
+      .getOne();
     
     return {
       departmentId,
-      departmentName: department?.department_name,
+      departmentName: department?.department?.department_name || 'Unknown',
       totalUsers: users.length,
       events: allEvents
     };

@@ -2,7 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { Task } from '../entities/task.entity';
+import { Task, TaskStatus } from '../entities/task.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { User } from '../entities/user.entity';
 import { Submission } from '../entities/submission.entity';
@@ -48,7 +48,10 @@ export class ProductivityService {
     
     for (const record of attendanceRecords) {
       if (record.check_in && record.check_out) {
-        const workHours = (record.check_out.getTime() - record.check_in.getTime()) / (1000 * 60 * 60);
+        const checkIn = new Date(record.check_in);
+        const checkOut = new Date(record.check_out);
+        const workHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
+        
         totalWorkHours += workHours;
         
         if (record.overtime_hours) {
@@ -61,7 +64,7 @@ export class ProductivityService {
     const completedTasks = await this.taskRepository.find({
       where: {
         assigned_to: userId,
-        status: 'Completed',
+        status: TaskStatus.COMPLETED,
         updated_at: Between(start, end)
       }
     });
@@ -113,8 +116,8 @@ export class ProductivityService {
     
     return {
       userId,
-      userName: user.full_name,
-      department: user.department?.department_name,
+      userName: user?.full_name || 'Unknown',
+      department: user?.department?.department_name || 'Unknown',
       period: { startDate, endDate },
       productivity
     };
@@ -150,7 +153,7 @@ export class ProductivityService {
     
     return {
       departmentId,
-      departmentName: users[0]?.department?.department_name,
+      departmentName: users[0]?.department?.department_name || 'Unknown',
       period: { startDate, endDate },
       teamSize: users.length,
       summary: {

@@ -1,9 +1,9 @@
 // src/tasks/task-reminder.service.ts
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual, MoreThan, IsNull } from 'typeorm';
-import { Task } from '../entities/task.entity';
-import { Notification } from '../entities/notification.entity';
+import { Repository, LessThanOrEqual, MoreThan } from 'typeorm';
+import { Task, TaskStatus } from '../entities/task.entity';
+import { Notification, NotificationType } from '../entities/notification.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
@@ -26,8 +26,7 @@ export class TaskReminderService {
     const upcomingTasks = await this.taskRepository.find({
       where: {
         deadline: LessThanOrEqual(twoDaysLater),
-        deadline: MoreThan(now),
-        status: 'InProgress',
+        status: TaskStatus.IN_PROGRESS,
       },
       relations: ['assignedToUser'],
     });
@@ -39,7 +38,7 @@ export class TaskReminderService {
         where: {
           user_id: task.assigned_to,
           title: `Reminder: ${task.title}`,
-          type: 'Task',
+          type: NotificationType.TASK,
         },
       });
       
@@ -49,7 +48,7 @@ export class TaskReminderService {
           user_id: task.assigned_to,
           title: `Reminder: ${task.title}`,
           content: `Nhiệm vụ "${task.title}" sẽ đến hạn vào ${task.deadline.toLocaleDateString()}.`,
-          type: 'Task',
+          type: NotificationType.TASK,
           is_read: false,
           created_at: new Date(),
         });

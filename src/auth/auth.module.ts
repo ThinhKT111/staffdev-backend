@@ -9,12 +9,16 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
+import { Document } from '../entities/document.entity';
+import { Profile } from '../entities/profile.entity';
+import { ProfilesService } from '../profiles/profiles.service';
+import { Notification } from '../entities/notification.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, Document, Profile, Notification]),
     PassportModule,
-    ConfigModule, // Thêm ConfigModule vào imports
+    ConfigModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -24,7 +28,7 @@ import { LocalStrategy } from './strategies/local.strategy';
       inject: [ConfigService],
     }),
   ],
-  providers: [AuthService, JwtStrategy, LocalStrategy],
+  providers: [AuthService, JwtStrategy, LocalStrategy, ProfilesService],
   controllers: [AuthController],
   exports: [AuthService],
 })

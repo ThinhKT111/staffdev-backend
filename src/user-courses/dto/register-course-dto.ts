@@ -1,5 +1,5 @@
-// src/user-courses/dto/register-course.dto.ts
-import { IsNotEmpty, IsNumber, IsOptional } from 'class-validator';
+// src/user-courses/dto/register-course-dto.ts
+import { IsNotEmpty, IsNumber, IsOptional, IsDateString } from 'class-validator';
 
 export class RegisterCourseDto {
   @IsOptional()
@@ -10,9 +10,6 @@ export class RegisterCourseDto {
   @IsNumber()
   courseId: number;
 }
-
-// src/user-courses/dto/confirm-attendance.dto.ts
-import { IsNotEmpty, IsNumber, IsDateString } from 'class-validator';
 
 export class ConfirmAttendanceDto {
   @IsNotEmpty()

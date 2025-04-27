@@ -7,6 +7,7 @@ import { CreateProfileDto } from './dto/create-profile.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { authenticator } from 'otplib';
 import * as QRCode from 'qrcode';
+import { User } from '../entities/user.entity';
 
 @Injectable()
 export class ProfilesService {
@@ -14,6 +15,8 @@ export class ProfilesService {
   constructor(
     @InjectRepository(Profile)
     private profilesRepository: Repository<Profile>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>
   ) {}
 
   async findAll(): Promise<Profile[]> {

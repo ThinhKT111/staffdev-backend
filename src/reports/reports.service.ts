@@ -11,12 +11,6 @@ import { Readable } from 'stream';
 
 @Injectable()
 export class ReportsService {
-  getTrainingReport(startDate: string, endDate: string) {
-    throw new Error('Method not implemented.');
-  }
-  getTaskReport(startDate: string, endDate: string, arg2: number | undefined) {
-    throw new Error('Method not implemented.');
-  }
   constructor(
     @InjectRepository(Attendance)
     private attendanceRepository: Repository<Attendance>,
@@ -60,28 +54,30 @@ export class ReportsService {
     const userStats = {};
     
     for (const attendance of attendances) {
-      const userId = attendance.user_id;
-      
-      if (!userStats[userId]) {
-        userStats[userId] = {
-          userId,
-          fullName: attendance.user?.full_name,
-          department: attendance.user?.department?.department_name,
-          checkIns: 0,
-          leaves: 0,
-          overtimeHours: 0,
-        };
-      }
-      
-      if (attendance.check_in) {
-        userStats[userId].checkIns++;
-        if (attendance.overtime_hours) {
-          userStats[userId].overtimeHours += +attendance.overtime_hours;
+      if (attendance.user) {
+        const userId = attendance.user.user_id;
+        
+        if (!userStats[userId]) {
+          userStats[userId] = {
+            userId,
+            fullName: attendance.user.full_name,
+            department: attendance.user.department?.department_name,
+            checkIns: 0,
+            leaves: 0,
+            overtimeHours: 0,
+          };
         }
-      }
-      
-      if (attendance.leave_type) {
-        userStats[userId].leaves++;
+        
+        if (attendance.check_in) {
+          userStats[userId].checkIns++;
+          if (attendance.overtime_hours) {
+            userStats[userId].overtimeHours += +attendance.overtime_hours;
+          }
+        }
+        
+        if (attendance.leave_type) {
+          userStats[userId].leaves++;
+        }
       }
     }
     
@@ -150,5 +146,13 @@ export class ReportsService {
     return stream;
   }
 
-  // Thêm các phương thức báo cáo khác (getTrainingReport, getTaskReport) tương tự
+  async getTrainingReport(startDate: string, endDate: string): Promise<any> {
+    // Cài đặt mã này dựa trên yêu cầu của bạn
+    return { message: "Not implemented yet" };
+  }
+
+  async getTaskReport(startDate: string, endDate: string, departmentId?: number): Promise<any> {
+    // Cài đặt mã này dựa trên yêu cầu của bạn
+    return { message: "Not implemented yet" };
+  }
 }

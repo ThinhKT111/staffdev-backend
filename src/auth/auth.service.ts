@@ -7,15 +7,24 @@ import { User, UserRole } from '../entities/user.entity';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { CreateUserDto } from './dto/create-user.dto';
+import { Document } from '../entities/document.entity';
+import { Profile } from '../entities/profile.entity';
+import { ProfilesService } from '../profiles/profiles.service';
+import { Notification } from '../entities/notification.entity';
 
 @Injectable()
 export class AuthService {
-  notificationsRepository: any;
-  
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    @InjectRepository(Document)
+    private documentsRepository: Repository<Document>,
+    @InjectRepository(Profile)
+    private profileRepository: Repository<Profile>,
+    @InjectRepository(Notification)
+    private notificationsRepository: Repository<Notification>,
     private jwtService: JwtService,
+    private profileService: ProfilesService,
   ) {}
 
   async validateUser(cccd: string, password: string): Promise<any> {

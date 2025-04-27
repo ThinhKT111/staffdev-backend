@@ -2,7 +2,7 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Task } from '../entities/task.entity';
+import { Task, TaskStatus } from '../entities/task.entity';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 
@@ -49,7 +49,7 @@ export class PersonalGoalsService {
       assigned_to: userId, // Gán cho chính người dùng đó
       assigned_by: userId, // Người tạo cũng là người dùng đó
       deadline: new Date(createGoalDto.deadline),
-      status: 'Pending',
+      status: TaskStatus.PENDING,
       created_at: new Date(),
       updated_at: new Date(),
     });
@@ -64,15 +64,30 @@ export class PersonalGoalsService {
     if (updateGoalDto.title) goal.title = updateGoalDto.title;
     if (updateGoalDto.description) goal.description = updateGoalDto.description;
     if (updateGoalDto.deadline) goal.deadline = new Date(updateGoalDto.deadline);
-    if (updateGoalDto.status) goal.status = updateGoalDto.status;
+    if (updateGoalDto.status) {
+      switch (updateGoalDto.status) {
+        case 'Pending':
+          goal.status = TaskStatus.PENDING;
+          break;
+        case 'InProgress':
+          goal.status = TaskStatus.IN_PROGRESS;
+          break;
+        case 'Completed':
+          goal.status = TaskStatus.COMPLETED;
+          break;
+        case 'Rejected':
+          goal.status = TaskStatus.REJECTED;
+          break;
+      }
+    }
    
     goal.updated_at = new Date();
    
     return this.tasksRepository.save(goal);
-    }
+  }
 
-    async remove(id: number, userId: number): Promise<void> {
-        const goal = await this.findOne(id, userId);
-        await this.tasksRepository.remove(goal);
-    }
+  async remove(id: number, userId: number): Promise<void> {
+    const goal = await this.findOne(id, userId);
+    await this.tasksRepository.remove(goal);
+  }
 }

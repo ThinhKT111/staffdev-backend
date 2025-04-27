@@ -1,17 +1,22 @@
 // src/user-courses/user-courses.service.ts
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Between } from 'typeorm';
 import { UserCourse, CourseStatus } from '../entities/user-course.entity';
 import { EnrollCourseDto } from './dto/enroll-course.dto';
 import { UpdateProgressDto } from './dto/update-progress.dto';
+import { Course } from '../entities/course.entity';
+import { Attendance } from '../entities/attendance.entity';
 
 @Injectable()
 export class UserCoursesService {
-  submissionRepository: any;
   constructor(
     @InjectRepository(UserCourse)
     private userCourseRepository: Repository<UserCourse>,
+    @InjectRepository(Course)
+    private courseRepository: Repository<Course>,
+    @InjectRepository(Attendance)
+    private attendanceRepository: Repository<Attendance>
   ) {}
 
   async findAll(): Promise<UserCourse[]> {
@@ -157,12 +162,6 @@ export class UserCoursesService {
       relations: ['course', 'course.trainingPath'],
     });
     
-    // Lấy tất cả các bài nộp của người dùng
-    const submissions = await this.submissionRepository.find({
-      where: { user_id: userId },
-      relations: ['assignment', 'assignment.course'],
-    });
-    
     // Tổng hợp theo lộ trình đào tạo
     const pathProgress = {};
     
@@ -188,29 +187,25 @@ export class UserCoursesService {
       pathProgress[trainingPathId].totalCourses++;
       
       // Cập nhật trạng thái
-      if (userCourse.status === 'Completed') {
+      if (userCourse.status === CourseStatus.COMPLETED) {
         pathProgress[trainingPathId].completedCourses++;
         if (userCourse.score) {
           pathProgress[trainingPathId].totalScore += userCourse.score;
         }
-      } else if (userCourse.status === 'InProgress') {
+      } else if (userCourse.status === CourseStatus.IN_PROGRESS) {
         pathProgress[trainingPathId].inProgressCourses++;
       } else {
         pathProgress[trainingPathId].notStartedCourses++;
       }
       
       // Thêm thông tin khóa học
-      const courseSubmissions = submissions.filter(
-        s => s.assignment?.course?.course_id === userCourse.course_id
-      );
-      
       pathProgress[trainingPathId].courses.push({
         courseId: userCourse.course_id,
         courseTitle: userCourse.course?.title,
         status: userCourse.status,
         score: userCourse.score,
         completionDate: userCourse.completion_date,
-        submissionCount: courseSubmissions.length,
+        submissionCount: 0, // Placeholder - sẽ được tính sau nếu cần
       });
     }
     
@@ -226,7 +221,7 @@ export class UserCoursesService {
     // Tính tỷ lệ hoàn thành tổng thể
     const totalCourses = userCourses.length;
     const completedCourses = userCourses.filter(
-      uc => uc.status === 'Completed'
+      uc => uc.status === CourseStatus.COMPLETED
     ).length;
     
     const overallProgress = totalCourses > 0 ? (completedCourses / totalCourses) * 100 : 0;
@@ -263,7 +258,7 @@ export class UserCoursesService {
     const userCourse = this.userCourseRepository.create({
       user_id: userId,
       course_id: courseId,
-      status: 'NotStarted',
+      status: CourseStatus.NOT_STARTED,
     });
     
     return this.userCourseRepository.save(userCourse);
@@ -280,8 +275,8 @@ export class UserCoursesService {
     }
     
     // Chuyển trạng thái sang InProgress nếu chưa bắt đầu
-    if (enrollment.status === 'NotStarted') {
-      enrollment.status = 'InProgress';
+    if (enrollment.status === CourseStatus.NOT_STARTED) {
+      enrollment.status = CourseStatus.IN_PROGRESS;
       await this.userCourseRepository.save(enrollment);
     }
     
@@ -291,7 +286,7 @@ export class UserCoursesService {
     const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
     
     // Kiểm tra xem đã điểm danh chưa
-    const existingAttendance = await this.attendanceRepository.findOne({
+    const existingAttendance = await this.attendanceRepository.find({
       where: {
         user_id: userId,
         check_in: Between(startOfDay, endOfDay),
@@ -299,8 +294,8 @@ export class UserCoursesService {
       }
     });
     
-    if (existingAttendance) {
-      return { message: 'Bạn đã điểm danh khóa học này hôm nay rồi', attendance: existingAttendance };
+    if (existingAttendance && existingAttendance.length > 0) {
+      return { message: 'Bạn đã điểm danh khóa học này hôm nay rồi', attendance: existingAttendance[0] };
     }
     
     // Tạo bản ghi điểm danh mới
