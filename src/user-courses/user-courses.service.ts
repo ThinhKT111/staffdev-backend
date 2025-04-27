@@ -8,6 +8,7 @@ import { UpdateProgressDto } from './dto/update-progress.dto';
 
 @Injectable()
 export class UserCoursesService {
+  submissionRepository: any;
   constructor(
     @InjectRepository(UserCourse)
     private userCourseRepository: Repository<UserCourse>,
@@ -146,6 +147,174 @@ export class UserCoursesService {
       completed,
       completionRate: totalEnrollments > 0 ? (completed / totalEnrollments) * 100 : 0,
       averageScore: Math.round(averageScore * 100) / 100,
+    };
+  }
+
+  async getUserLearningProgress(userId: number): Promise<any> {
+    // Lấy tất cả các khóa học của người dùng
+    const userCourses = await this.userCourseRepository.find({
+      where: { user_id: userId },
+      relations: ['course', 'course.trainingPath'],
+    });
+    
+    // Lấy tất cả các bài nộp của người dùng
+    const submissions = await this.submissionRepository.find({
+      where: { user_id: userId },
+      relations: ['assignment', 'assignment.course'],
+    });
+    
+    // Tổng hợp theo lộ trình đào tạo
+    const pathProgress = {};
+    
+    for (const userCourse of userCourses) {
+      const trainingPathId = userCourse.course?.trainingPath?.training_path_id;
+      const pathName = userCourse.course?.trainingPath?.title || 'Khóa học độc lập';
+      
+      if (!pathProgress[trainingPathId]) {
+        pathProgress[trainingPathId] = {
+          pathId: trainingPathId,
+          pathName: pathName,
+          totalCourses: 0,
+          completedCourses: 0,
+          inProgressCourses: 0,
+          notStartedCourses: 0,
+          averageScore: 0,
+          totalScore: 0,
+          courses: [],
+        };
+      }
+      
+      // Tăng số lượng khóa học
+      pathProgress[trainingPathId].totalCourses++;
+      
+      // Cập nhật trạng thái
+      if (userCourse.status === 'Completed') {
+        pathProgress[trainingPathId].completedCourses++;
+        if (userCourse.score) {
+          pathProgress[trainingPathId].totalScore += userCourse.score;
+        }
+      } else if (userCourse.status === 'InProgress') {
+        pathProgress[trainingPathId].inProgressCourses++;
+      } else {
+        pathProgress[trainingPathId].notStartedCourses++;
+      }
+      
+      // Thêm thông tin khóa học
+      const courseSubmissions = submissions.filter(
+        s => s.assignment?.course?.course_id === userCourse.course_id
+      );
+      
+      pathProgress[trainingPathId].courses.push({
+        courseId: userCourse.course_id,
+        courseTitle: userCourse.course?.title,
+        status: userCourse.status,
+        score: userCourse.score,
+        completionDate: userCourse.completion_date,
+        submissionCount: courseSubmissions.length,
+      });
+    }
+    
+    // Tính điểm trung bình cho mỗi lộ trình
+    for (const pathId in pathProgress) {
+      if (pathProgress[pathId].completedCourses > 0) {
+        pathProgress[pathId].averageScore = 
+          pathProgress[pathId].totalScore / pathProgress[pathId].completedCourses;
+      }
+      delete pathProgress[pathId].totalScore;
+    }
+    
+    // Tính tỷ lệ hoàn thành tổng thể
+    const totalCourses = userCourses.length;
+    const completedCourses = userCourses.filter(
+      uc => uc.status === 'Completed'
+    ).length;
+    
+    const overallProgress = totalCourses > 0 ? (completedCourses / totalCourses) * 100 : 0;
+    
+    return {
+      userId,
+      overallProgress: Math.round(overallProgress),
+      totalCourses,
+      completedCourses,
+      pathProgress: Object.values(pathProgress),
+    };
+  }
+
+  async registerCourse(userId: number, courseId: number): Promise<UserCourse> {
+    // Kiểm tra xem đã đăng ký chưa
+    const existingEnrollment = await this.userCourseRepository.findOne({
+      where: { user_id: userId, course_id: courseId }
+    });
+    
+    if (existingEnrollment) {
+      throw new ConflictException('Bạn đã đăng ký khóa học này rồi');
+    }
+    
+    // Kiểm tra khóa học có tồn tại và đang hoạt động
+    const course = await this.courseRepository.findOne({
+      where: { course_id: courseId, is_active: true }
+    });
+    
+    if (!course) {
+      throw new NotFoundException('Khóa học không tồn tại hoặc không hoạt động');
+    }
+    
+    // Tạo đăng ký mới
+    const userCourse = this.userCourseRepository.create({
+      user_id: userId,
+      course_id: courseId,
+      status: 'NotStarted',
+    });
+    
+    return this.userCourseRepository.save(userCourse);
+  }
+
+  async confirmAttendance(userId: number, courseId: number, date: string): Promise<any> {
+    // Kiểm tra người dùng đã đăng ký khóa học chưa
+    const enrollment = await this.userCourseRepository.findOne({
+      where: { user_id: userId, course_id: courseId }
+    });
+    
+    if (!enrollment) {
+      throw new NotFoundException('Bạn chưa đăng ký khóa học này');
+    }
+    
+    // Chuyển trạng thái sang InProgress nếu chưa bắt đầu
+    if (enrollment.status === 'NotStarted') {
+      enrollment.status = 'InProgress';
+      await this.userCourseRepository.save(enrollment);
+    }
+    
+    // Tạo bản ghi điểm danh (dùng bảng Attendance)
+    const attendanceDate = new Date(date);
+    const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
+    
+    // Kiểm tra xem đã điểm danh chưa
+    const existingAttendance = await this.attendanceRepository.findOne({
+      where: {
+        user_id: userId,
+        check_in: Between(startOfDay, endOfDay),
+        note: `Course attendance: ${courseId}`
+      }
+    });
+    
+    if (existingAttendance) {
+      return { message: 'Bạn đã điểm danh khóa học này hôm nay rồi', attendance: existingAttendance };
+    }
+    
+    // Tạo bản ghi điểm danh mới
+    const attendance = this.attendanceRepository.create({
+      user_id: userId,
+      check_in: new Date(),
+      note: `Course attendance: ${courseId}`
+    });
+    
+    const savedAttendance = await this.attendanceRepository.save(attendance);
+    
+    return {
+      message: 'Xác nhận tham gia khóa học thành công',
+      attendance: savedAttendance
     };
   }
 }

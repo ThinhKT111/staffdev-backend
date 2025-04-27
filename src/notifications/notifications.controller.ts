@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
+import { BulkCreateNotificationDto } from './dto/bulk-create-notification.dto';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
@@ -32,6 +33,29 @@ export class NotificationsController {
   @Roles(UserRole.ADMIN, UserRole.TEAM_LEADER)
   create(@Body() createNotificationDto: CreateNotificationDto) {
     return this.notificationsService.create(createNotificationDto);
+  }
+
+  @Post('bulk')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.TEAM_LEADER)
+  createBulk(@Body() bulkCreateDto: BulkCreateNotificationDto) {
+    return this.notificationsService.createBulk(bulkCreateDto);
+  }
+
+  @Post('department/:departmentId')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.TEAM_LEADER, UserRole.SENIOR_MANAGER)
+  createForDepartment(
+    @Param('departmentId') departmentId: string,
+    @Body() createNotificationDto: CreateNotificationDto
+  ) {
+    const { title, content, type } = createNotificationDto;
+    return this.notificationsService.createForDepartment(
+      +departmentId,
+      title,
+      content,
+      type
+    );
   }
 
   @Patch(':id/read')

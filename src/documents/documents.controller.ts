@@ -12,6 +12,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
 import { ConfigService } from '@nestjs/config';
+import { GenerateDocumentDto } from './dto/generate-document.dto';
 
 @Controller('documents')
 @UseGuards(JwtAuthGuard)
@@ -57,6 +58,11 @@ export class DocumentsController {
     return new StreamableFile(file);
   }
 
+  @Get('templates')
+  findTemplates() {
+    return this.documentsService.findTemplates();
+  }
+
   @Post()
   @UseInterceptors(FileInterceptor('file'))
   create(
@@ -64,6 +70,36 @@ export class DocumentsController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     return this.documentsService.create(createDocumentDto, file);
+  }
+
+  @Post('templates')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.TEAM_LEADER)
+  @UseInterceptors(FileInterceptor('file'))
+  createTemplate(
+    @Body() createDocumentDto: CreateDocumentDto,
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req
+  ) {
+    if (!createDocumentDto.uploadedBy) {
+      createDocumentDto.uploadedBy = req.user.userId;
+    }
+    createDocumentDto.category = 'Template';
+    return this.documentsService.create(createDocumentDto, file);
+  }
+
+  @Post('generate/:templateId')
+  @UseInterceptors(FileInterceptor('file'))
+  generateFromTemplate(
+    @Param('templateId') templateId: string,
+    @Body() generateDto: GenerateDocumentDto,
+    @Request() req
+  ) {
+    return this.documentsService.generateFromTemplate(
+      +templateId,
+      generateDto,
+      req.user.userId
+    );
   }
 
   @Patch(':id')

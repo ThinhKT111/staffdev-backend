@@ -6,9 +6,11 @@ import { Notification, NotificationType } from '../entities/notification.entity'
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { MarkAsReadDto } from './dto/mark-as-read.dto';
 import { NotificationsGateway } from './notifications.gateway';
+import { BulkCreateNotificationDto } from './dto/bulk-create-notification.dto';
 
 @Injectable()
 export class NotificationsService {
+  userRepository: any;
   constructor(
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
@@ -97,5 +99,56 @@ export class NotificationsService {
   async remove(id: number): Promise<void> {
     const notification = await this.findOne(id);
     await this.notificationRepository.remove(notification);
+  }
+
+  async createBulk(bulkCreateDto: BulkCreateNotificationDto): Promise<any> {
+    const { userIds, title, content, type } = bulkCreateDto;
+    const createdNotifications = [];
+    
+    // Tạo thông báo cho mỗi người dùng
+    for (const userId of userIds) {
+      try {
+        const notification = await this.create({
+          userId,
+          title,
+          content,
+          type,
+        });
+        createdNotifications.push(notification);
+      } catch (error) {
+        console.error(`Lỗi khi tạo thông báo cho người dùng ${userId}:`, error);
+      }
+    }
+    
+    return {
+      message: `Đã tạo ${createdNotifications.length} thông báo từ tổng số ${userIds.length} người dùng`,
+      notifications: createdNotifications,
+    };
+  }
+
+  async createForDepartment(
+    departmentId: number,
+    title: string,
+    content: string,
+    type: string
+  ): Promise<any> {
+    // Lấy tất cả người dùng trong phòng ban
+    const users = await this.userRepository.find({
+      where: { department_id: departmentId },
+    });
+    
+    if (users.length === 0) {
+      throw new NotFoundException(`Không tìm thấy người dùng trong phòng ban ID ${departmentId}`);
+    }
+    
+    const userIds = users.map(user => user.user_id);
+    
+    // Gọi hàm createBulk để tạo thông báo cho tất cả người dùng
+    return this.createBulk({
+      userIds,
+      title,
+      content,
+      type,
+    });
   }
 }
