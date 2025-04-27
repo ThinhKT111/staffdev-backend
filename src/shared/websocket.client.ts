@@ -1,21 +1,32 @@
 // src/shared/websocket.client.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, Optional } from '@nestjs/common';
 import { Server } from 'socket.io';
-import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 @Injectable()
 export class WebSocketClient {
-  constructor(private notificationsGateway: NotificationsGateway) {}
+  private server: Server | null = null;
 
-  getServer(): Server {
-    return this.notificationsGateway.server;
+  setServer(server: Server): void {
+    this.server = server;
+  }
+
+  getServer(): Server | null {
+    return this.server;
   }
 
   broadcastToAll(event: string, data: any): void {
-    this.notificationsGateway.server.emit(event, data);
+    if (this.server) {
+      this.server.emit(event, data);
+    } else {
+      console.warn('WebSocket server not initialized yet');
+    }
   }
 
   sendToUser(userId: number, event: string, data: any): void {
-    this.notificationsGateway.server.to(`user-${userId}`).emit(event, data);
+    if (this.server) {
+      this.server.to(`user-${userId}`).emit(event, data);
+    } else {
+      console.warn('WebSocket server not initialized yet');
+    }
   }
 }

@@ -8,7 +8,7 @@ import { Notification } from '../entities/notification.entity';
 import { User } from '../entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { WebSocketRateLimiter } from 'src/shared/websocket-rate-limit';
+import { WebSocketRateLimiter } from '../shared/websocket-rate-limit';
 
 @Module({
   imports: [

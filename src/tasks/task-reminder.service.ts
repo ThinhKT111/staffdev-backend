@@ -1,7 +1,7 @@
 // src/tasks/task-reminder.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual, MoreThan, Not, Between, LessThan } from 'typeorm';
+import { Repository, LessThanOrEqual, MoreThan, Not, Between, LessThan, In } from 'typeorm';
 import { Task, TaskStatus } from '../entities/task.entity';
 import { Notification, NotificationType } from '../entities/notification.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -27,8 +27,7 @@ export class TaskReminderService {
     const upcomingTasks = await this.taskRepository.find({
       where: {
         deadline: Between(now, twoDaysLater),
-        status: Not(TaskStatus.COMPLETED),
-        status: Not(TaskStatus.REJECTED)
+        status: Not(In([TaskStatus.COMPLETED, TaskStatus.REJECTED]))
       },
       relations: ['assignedToUser'],
     });
@@ -59,7 +58,7 @@ export class TaskReminderService {
     return upcomingTasks.length;
   }
   
-  @Cron(CronExpression.EVERY_WEEK_ON_MONDAY_AT_9AM)
+  @Cron('0 9 * * 1') // Chạy vào 9h sáng mỗi thứ 2
   async sendWeeklySummary() {
     this.logger.log('Starting weekly task summary job');
     

@@ -1,5 +1,5 @@
 // src/notifications/notifications.controller.ts
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Request as NestRequest } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { MarkAsReadDto } from './dto/mark-as-read.dto';
@@ -31,7 +31,7 @@ export class NotificationsController {
 
   @Get('unread-count')
   @UseGuards(JwtAuthGuard)
-  async getUnreadCount(@Request() req): Promise<{ count: number }> {
+  async getUnreadCount(@NestRequest() req): Promise<{ count: number }> {
     const userId = req.user.userId;
     const count = await this.notificationsService.getUnreadCount(userId);
     return { count };
@@ -40,7 +40,7 @@ export class NotificationsController {
   @Get('paginated')
   @UseGuards(JwtAuthGuard)
   async getPaginated(
-    @Request() req,
+    @NestRequest() req,
     @Query('page') page: number = 1,
     @Query('pageSize') pageSize: number = 10
   ) {
@@ -51,7 +51,7 @@ export class NotificationsController {
   @Post('read-multiple')
   @UseGuards(JwtAuthGuard)
   async markMultipleAsRead(
-    @Request() req,
+    @NestRequest() req,
     @Body() { notificationIds }: { notificationIds: number[] }
   ) {
     const userId = req.user.userId;
@@ -62,7 +62,7 @@ export class NotificationsController {
   @Get('by-type/:type')
   @UseGuards(JwtAuthGuard)
   async getByType(
-    @Request() req,
+    @NestRequest() req,
     @Param('type') type: string
   ) {
     const userId = req.user.userId;

@@ -6,16 +6,17 @@ import {
   OnGatewayDisconnect,
   SubscribeMessage,
   MessageBody,
-  ConnectedSocket
+  ConnectedSocket,
+  OnGatewayInit
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger, UseGuards, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { NotificationsService } from './notifications.service';
+import { NotificationType } from '../entities/notification.entity';
 import { NotificationEvents } from './dto/notification-event.dto';
 import { WebSocketMessageDto } from './dto/websocket-message.dto';
-import { WebSocketRateLimiter } from 'src/shared/websocket-rate-limit';
-
+import { WebSocketRateLimiter } from '../shared/websocket-rate-limit';
+import { WebSocketClient } from '../shared/websocket.client';
 
 @Injectable()
 @WebSocketGateway({
@@ -26,18 +27,21 @@ import { WebSocketRateLimiter } from 'src/shared/websocket-rate-limit';
   },
   namespace: 'notifications'
 })
-export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer() server: Server;
   private logger = new Logger('NotificationsGateway');
   private userSockets: Map<number, string[]> = new Map();
 
   constructor(
     private jwtService: JwtService,
-    private notificationsService: NotificationsService,
-    private rateLimiter: WebSocketRateLimiter
+    private rateLimiter: WebSocketRateLimiter,
+    private webSocketClient: WebSocketClient
   ) {}
 
-  
+  afterInit(server: Server): void {
+    this.webSocketClient.setServer(server);
+    this.logger.log('WebSocket server initialized and shared with WebSocketClient');
+  }
 
   handleDisconnect(client: Socket): void {
     this.logger.log(`Client disconnected: ${client.id}`);
@@ -55,7 +59,6 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
       }
     });
   }
-
 
   broadcastNotification(notification: any): void {
     this.server.emit('broadcast', notification);
@@ -86,17 +89,9 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
       // Join room based on userId
       client.join(`user-${userId}`);
       
-      // Send unread notifications count
-      const unreadCount = await this.notificationsService.getUnreadCount(userId);
-      
-      // Send recent notifications (last 5)
-      const recentNotifications = await this.notificationsService.findByUser(userId, 5);
-      
       // Send connection established with initial data
       this.server.to(client.id).emit(NotificationEvents.CONNECTION_ESTABLISHED, {
-        userId,
-        unreadCount,
-        recentNotifications
+        userId
       });
       
     } catch (error) {
@@ -144,19 +139,13 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
   
   // Các phương thức xử lý event
   private async handleMarkAsRead(userId: number, notificationId: number): Promise<void> {
-    await this.notificationsService.markAsRead(notificationId, { isRead: true });
-    
     // Broadcast to all user's connections
-    const unreadCount = await this.notificationsService.getUnreadCount(userId);
     this.server.to(`user-${userId}`).emit(NotificationEvents.NOTIFICATION_READ, { 
-      notificationId,
-      unreadCount
+      notificationId
     });
   }
   
   private async handleMarkAllAsRead(userId: number): Promise<void> {
-    await this.notificationsService.markAllAsRead(userId);
-    
     // Broadcast to all user's connections
     this.server.to(`user-${userId}`).emit(NotificationEvents.ALL_NOTIFICATIONS_READ, { 
       unreadCount: 0 
@@ -164,19 +153,13 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
   }
   
   private async handleGetNotifications(userId: number, client: Socket): Promise<void> {
-    const notifications = await this.notificationsService.findByUser(userId);
-    client.emit('notifications', { notifications });
+    client.emit('notifications', { userId });
   }
   
   // Cập nhật phương thức gửi thông báo
   sendNotificationToUser(userId: number, notification: any): void {
     // Send to specific user's room
     this.server.to(`user-${userId}`).emit(NotificationEvents.NEW_NOTIFICATION, notification);
-    
-    // Also update unread count
-    this.notificationsService.getUnreadCount(userId).then(count => {
-      this.server.to(`user-${userId}`).emit(NotificationEvents.UNREAD_COUNT, { count });
-    });
     
     this.logger.log(`Notification sent to user ${userId}`);
   }

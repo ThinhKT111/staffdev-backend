@@ -262,13 +262,10 @@ export class TasksService {
     
     // Tìm các nhiệm vụ chưa hoàn thành và sắp đến hạn
     const upcomingTasks = await this.tasksRepository.find({
-      where: [
-        { 
-          deadline: Between(now, thresholdDate),
-          status: Not(TaskStatus.COMPLETED),
-          status: Not(TaskStatus.REJECTED)
-        }
-      ],
+      where: {
+        deadline: Between(now, thresholdDate),
+        status: Not(In([TaskStatus.COMPLETED, TaskStatus.REJECTED]))
+      },
       relations: ['assignedToUser', 'assignedByUser']
     });
     
@@ -313,13 +310,10 @@ export class TasksService {
     
     // Tìm các nhiệm vụ đã quá hạn nhưng chưa hoàn thành
     const overdueTasks = await this.tasksRepository.find({
-      where: [
-        { 
-          deadline: LessThan(now),
-          status: Not(TaskStatus.COMPLETED),
-          status: Not(TaskStatus.REJECTED)
-        }
-      ],
+      where: {
+        deadline: LessThan(now),
+        status: Not(In([TaskStatus.COMPLETED, TaskStatus.REJECTED]))
+      },
       relations: ['assignedToUser', 'assignedByUser']
     });
     

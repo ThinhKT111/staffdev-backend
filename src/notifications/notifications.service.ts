@@ -1,22 +1,25 @@
 // src/notifications/notifications.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Notification, NotificationType } from '../entities/notification.entity';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { MarkAsReadDto } from './dto/mark-as-read.dto';
-import { NotificationsGateway } from './notifications.gateway';
 import { BulkCreateNotificationDto } from './dto/bulk-create-notification.dto';
 import { User } from '../entities/user.entity';
+import { WebSocketClient } from '../shared/websocket.client';
+import { NotificationEvents } from './dto/notification-event.dto';
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     @InjectRepository(Notification)
     private notificationRepository: Repository<Notification>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
-    private notificationsGateway: NotificationsGateway,
+    private webSocketClient: WebSocketClient,
   ) {}
 
   async findAll(): Promise<Notification[]> {
@@ -128,8 +131,9 @@ export class NotificationsService {
     const savedNotification = await this.notificationRepository.save(notification);
     
     // Send realtime notification through WebSocket
-    this.notificationsGateway.sendNotificationToUser(
+    this.webSocketClient.sendToUser(
       createNotificationDto.userId,
+      NotificationEvents.NEW_NOTIFICATION,
       savedNotification
     );
     

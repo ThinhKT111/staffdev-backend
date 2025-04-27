@@ -3,11 +3,10 @@ import { Module, Global } from '@nestjs/common';
 import { FileUploadService } from './file-upload.service';
 import { ConfigModule } from '@nestjs/config';
 import { WebSocketClient } from './websocket.client';
-import { NotificationsModule } from '../notifications/notifications.module';
 
 @Global()
 @Module({
-  imports: [ConfigModule, NotificationsModule],
+  imports: [ConfigModule],
   providers: [FileUploadService, WebSocketClient],
   exports: [FileUploadService, WebSocketClient],
 })
