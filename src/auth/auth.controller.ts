@@ -1,5 +1,5 @@
 // src/auth/auth.controller.ts
-import { Controller, Post, UseGuards, Request, Body, Patch } from '@nestjs/common';
+import { Controller, Post, UseGuards, Request, Body, Patch, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { LoginDto } from './dto/login.dto';
@@ -10,10 +10,44 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 
+import { RateLimit } from '../common/decorators/rate-limit.decorator';
+import { RateLimitGuard } from '../common/guards/rate-limit.guard';
+
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  @UseGuards(LocalAuthGuard, RateLimitGuard)
+  @RateLimit(5, 60) // 5 requests/minute
+  @Post('login')
+  async login(@Request() req, @Body('token2FA') token2FA?: string) {
+    return this.authService.login(req.user, token2FA);
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit(3, 300) // 3 requests/5 minutes
+  @Post('forgot-password')
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(forgotPasswordDto.email);
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit(3, 300) // 3 requests/5 minutes
+  @Post('reset-password')
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(
+      resetPasswordDto.token,
+      resetPasswordDto.newPassword
+    );
+  }
+
+  @UseGuards(RateLimitGuard)
+  @RateLimit(5, 300) // 5 requests/5 minutes
+  @Post('register')
+  async register(@Body() createUserDto: CreateUserDto) {
+    return this.authService.register(createUserDto);
+  }
+  
   @UseGuards(LocalAuthGuard)
   @Post('login')
   async login(@Request() req, @Body('token2FA') token2FA?: string) {
@@ -46,22 +80,50 @@ export class AuthController {
   
     return result;
   }
-
-  @Post('forgot-password')
-  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(forgotPasswordDto.email);
+  
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  async logout(@Request() req) {
+    const token = this.extractTokenFromRequest(req);
+    
+    if (!token) {
+      throw new UnauthorizedException('Token không hợp lệ');
+    }
+    
+    const success = await this.authService.logout(token);
+    
+    return { 
+      success, 
+      message: success ? 'Đăng xuất thành công' : 'Đăng xuất thất bại' 
+    };
   }
-
-  @Post('reset-password')
-  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
-    return this.authService.resetPassword(
-      resetPasswordDto.token,
-      resetPasswordDto.newPassword
-    );
+  
+  @Post('device/logout')
+  @UseGuards(JwtAuthGuard)
+  async logoutFromDevice(@Request() req, @Body('deviceId') deviceId: string) {
+    const success = await this.authService.logoutFromDevice(req.user.userId, deviceId);
+    
+    return {
+      success,
+      message: success ? 'Đã đăng xuất từ thiết bị' : 'Không thể đăng xuất từ thiết bị'
+    };
   }
-
-  @Post('register')
-  async register(@Body() createUserDto: CreateUserDto) {
-    return this.authService.register(createUserDto);
+  
+  @Post('devices')
+  @UseGuards(JwtAuthGuard)
+  async getUserDevices(@Request() req) {
+    const devices = await this.authService.getUserDevices(req.user.userId);
+    
+    return { devices };
+  }
+  
+  private extractTokenFromRequest(req: any): string | null {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return null;
+    }
+    
+    return authHeader.substring(7);
   }
 }

@@ -1,5 +1,5 @@
 // src/notifications/notifications.service.ts
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Notification, NotificationType } from '../entities/notification.entity';
@@ -9,9 +9,11 @@ import { BulkCreateNotificationDto } from './dto/bulk-create-notification.dto';
 import { User } from '../entities/user.entity';
 import { WebSocketClient } from '../shared/websocket.client';
 import { NotificationEvents } from './dto/notification-event.dto';
+import { QueueService } from '../shared/services/queue.service';
+import { UnreadCounterService } from './services/unread-counter.service';
 
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
@@ -20,7 +22,77 @@ export class NotificationsService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private webSocketClient: WebSocketClient,
+    private queueService: QueueService,
+    private unreadCounterService: UnreadCounterService,
   ) {}
+  
+  // Khởi động worker khi service được khởi tạo
+  onModuleInit() {
+    this.queueService.startWorker('notification', this.processNotification.bind(this));
+    this.queueService.startWorker('bulk_notification', this.processBulkNotification.bind(this));
+  }
+
+  // Xử lý thông báo từ queue
+  private async processNotification(data: any): Promise<Notification> {
+    const { userId, title, content, type } = data;
+    
+    try {
+      // Tạo thông báo mới
+      const notification = this.notificationRepository.create({
+        user_id: userId,
+        title,
+        content,
+        type: this.mapNotificationType(type),
+        is_read: false,
+        created_at: new Date(),
+      });
+      
+      const savedNotification = await this.notificationRepository.save(notification);
+      
+      // Tăng counter thông báo chưa đọc
+      const unreadCount = await this.unreadCounterService.increment(userId);
+      
+      // Gửi thông báo qua WebSocket với số lượng chưa đọc
+      this.webSocketClient.sendToUser(
+        userId,
+        NotificationEvents.NEW_NOTIFICATION,
+        {
+          ...savedNotification,
+          unreadCount,
+        }
+      );
+      
+      return savedNotification;
+    } catch (error) {
+      this.logger.error(`Failed to process notification: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Xử lý thông báo hàng loạt từ queue
+  private async processBulkNotification(data: any): Promise<any[]> {
+    const { userIds, title, content, type } = data;
+    const results = [];
+    
+    for (const userId of userIds) {
+      try {
+        // Thêm vào hàng đợi thông báo riêng lẻ
+        const jobId = await this.queueService.enqueue('notification', {
+          userId,
+          title,
+          content,
+          type,
+        });
+        
+        results.push({ userId, jobId, status: 'enqueued' });
+      } catch (error) {
+        this.logger.error(`Failed to queue notification for user ${userId}: ${error.message}`);
+        results.push({ userId, error: error.message, status: 'failed' });
+      }
+    }
+    
+    return results;
+  }
 
   async findAll(): Promise<Notification[]> {
     return this.notificationRepository.find({
@@ -53,300 +125,129 @@ export class NotificationsService {
     
     return notification;
   }
-
-  // Thêm phương thức tìm kiếm với phân trang
-  async findByUserPaginated(userId: number, page: number = 1, pageSize: number = 10): Promise<{
-    notifications: Notification[],
-    total: number,
-    page: number,
-    pageSize: number,
-    pageCount: number
-  }> {
-    const skip = (page - 1) * pageSize;
-    
-    const [notifications, total] = await this.notificationRepository.findAndCount({
-      where: { user_id: userId },
-      order: { created_at: 'DESC' },
-      skip,
-      take: pageSize
+ 
+  // Sửa đổi phương thức create để sử dụng queue
+  async create(createNotificationDto: CreateNotificationDto): Promise<any> {
+    const jobId = await this.queueService.enqueue('notification', {
+      userId: createNotificationDto.userId,
+      title: createNotificationDto.title,
+      content: createNotificationDto.content,
+      type: createNotificationDto.type,
     });
     
     return {
-      notifications,
-      total,
-      page,
-      pageSize,
-      pageCount: Math.ceil(total / pageSize)
+      message: 'Notification has been enqueued',
+      jobId,
     };
   }
-
-  // Thêm phương thức tìm theo loại
-  async findByType(userId: number, type: NotificationType): Promise<Notification[]> {
-    return this.notificationRepository.find({
-      where: {
-        user_id: userId,
-        type
-      },
-      order: { created_at: 'DESC' }
-    });
-  }
-
-  // Thêm phương thức batch mark as read
-  async markMultipleAsRead(userId: number, notificationIds: number[]): Promise<void> {
-    await this.notificationRepository.update(
-      { 
-        user_id: userId,
-        notification_id: In(notificationIds)  // Sử dụng typeorm In operator
-      },
-      { is_read: true }
-    );
-  }
-
-  async create(createNotificationDto: CreateNotificationDto): Promise<Notification> {
-    // Map type string to enum
-    let type: NotificationType;
-    switch (createNotificationDto.type) {
-      case 'Task':
-        type = NotificationType.TASK;
-        break;
-      case 'Assignment':
-        type = NotificationType.ASSIGNMENT;
-        break;
-      case 'Training':
-        type = NotificationType.TRAINING;
-        break;
-      default:
-        type = NotificationType.GENERAL;
-    }
-  
-    const notification = this.notificationRepository.create({
-      user_id: createNotificationDto.userId,
-      title: createNotificationDto.title,
-      content: createNotificationDto.content,
-      type: type,
-      is_read: false,
-      created_at: new Date(),
+ 
+  // Sửa đổi phương thức tạo thông báo hàng loạt
+  async createBulk(bulkCreateDto: BulkCreateNotificationDto): Promise<any> {
+    const jobId = await this.queueService.enqueue('bulk_notification', {
+      userIds: bulkCreateDto.userIds,
+      title: bulkCreateDto.title,
+      content: bulkCreateDto.content,
+      type: bulkCreateDto.type,
     });
     
-    const savedNotification = await this.notificationRepository.save(notification);
-    
-    // Send realtime notification through WebSocket
-    this.webSocketClient.sendToUser(
-      createNotificationDto.userId,
-      NotificationEvents.NEW_NOTIFICATION,
-      savedNotification
-    );
-    
-    return savedNotification;
+    return {
+      message: `Bulk notifications for ${bulkCreateDto.userIds.length} users have been enqueued`,
+      jobId,
+    };
   }
-
+ 
   async markAsRead(id: number, markAsReadDto: MarkAsReadDto): Promise<Notification> {
     const notification = await this.findOne(id);
+    
+    // Nếu đang chưa đọc và bây giờ đánh dấu đã đọc
+    if (!notification.is_read && markAsReadDto.isRead !== false) {
+      // Giảm counter
+      const unreadCount = await this.unreadCounterService.decrement(notification.user_id);
+      
+      // Thông báo qua WebSocket
+      this.webSocketClient.sendToUser(
+        notification.user_id,
+        NotificationEvents.UNREAD_COUNT,
+        { unreadCount }
+      );
+    }
     
     notification.is_read = markAsReadDto.isRead !== undefined ? markAsReadDto.isRead : true;
     
     return this.notificationRepository.save(notification);
   }
-
+ 
   async markAllAsRead(userId: number): Promise<void> {
     await this.notificationRepository.update(
       { user_id: userId, is_read: false },
       { is_read: true }
     );
+    
+    // Reset counter về 0
+    await this.unreadCounterService.reset(userId);
+    
+    // Thông báo qua WebSocket
+    this.webSocketClient.sendToUser(
+      userId,
+      NotificationEvents.ALL_NOTIFICATIONS_READ,
+      { unreadCount: 0 }
+    );
   }
-
+ 
   async remove(id: number): Promise<void> {
     const notification = await this.findOne(id);
     await this.notificationRepository.remove(notification);
   }
-
-  async createBulk(bulkCreateDto: BulkCreateNotificationDto): Promise<any> {
-    const { userIds, title, content, type } = bulkCreateDto;
-    const createdNotifications: Notification[] = [];
-    
-    // Tạo thông báo cho mỗi người dùng
-    for (const userId of userIds) {
-      try {
-        const notification = await this.create({
-          userId,
-          title,
-          content,
-          type,
-        });
-        createdNotifications.push(notification);
-      } catch (error) {
-        console.error(`Lỗi khi tạo thông báo cho người dùng ${userId}:`, error);
-      }
-    }
-    
-    return {
-      message: `Đã tạo ${createdNotifications.length} thông báo từ tổng số ${userIds.length} người dùng`,
-      notifications: createdNotifications,
-    };
-  }
-
-  async createForDepartment(
-    departmentId: number,
-    title: string,
-    content: string,
-    type: string
-  ): Promise<any> {
-    // Lấy tất cả người dùng trong phòng ban
-    const users = await this.userRepository.find({
-      where: { department_id: departmentId },
-    });
-    
-    if (users.length === 0) {
-      throw new NotFoundException(`Không tìm thấy người dùng trong phòng ban ID ${departmentId}`);
-    }
-    
-    const userIds = users.map(user => user.user_id);
-    
-    // Gọi hàm createBulk để tạo thông báo cho tất cả người dùng
-    return this.createBulk({
-      userIds,
-      title,
-      content,
-      type,
-    });
-  }
-
-  async getUnreadCount(userId: number): Promise<number> {
-    const count = await this.notificationRepository.count({
-      where: {
-        user_id: userId,
-        is_read: false
-      }
-    });
-    
-    return count;
-  }
-
-  async createSystemNotification(event: string, userId: number, data: any): Promise<Notification> {
-    // Tạo thông báo dựa trên sự kiện
-    let title: string;
-    let content: string;
-    let type: NotificationType;
-    
-    switch (event) {
-      case 'task_assigned':
-        title = 'Nhiệm vụ mới';
-        content = `Bạn được giao nhiệm vụ: ${data.title}`;
-        type = NotificationType.TASK;
-        break;
-      case 'course_enrolled':
-        title = 'Đăng ký khóa học';
-        content = `Bạn đã đăng ký khóa học: ${data.title}`;
-        type = NotificationType.TRAINING;
-        break;
-      case 'assignment_due':
-        title = 'Bài tập sắp đến hạn';
-        content = `Bài tập ${data.title} sẽ đến hạn vào ${new Date(data.deadline).toLocaleString()}`;
-        type = NotificationType.ASSIGNMENT;
-        break;
+ 
+  // Helper để convert string type sang enum
+  private mapNotificationType(type: string): NotificationType {
+    switch (type) {
+      case 'Task':
+        return NotificationType.TASK;
+      case 'Assignment':
+        return NotificationType.ASSIGNMENT;
+      case 'Training':
+        return NotificationType.TRAINING;
       default:
-        title = 'Thông báo';
-        content = data.message || 'Bạn có thông báo mới';
-        type = NotificationType.GENERAL;
+        return NotificationType.GENERAL;
     }
-    
-    // Tạo và lưu thông báo
-    return this.create({
-      userId,
-      title,
-      content,
-      type: type.toString(),
-    });
+  }
+ 
+  // Thêm phương thức để kiểm tra trạng thái thông báo
+  async getNotificationStatus(jobId: string): Promise<any> {
+    return this.queueService.getJob(jobId);
   }
 
-  // Thêm phương thức mới
-  async sendBulkNotification(
-    userIds: number[],
-    title: string,
-    content: string,
-    type: string,
-    metadata?: any
-  ): Promise<Notification[]> {
-    const notifications: Notification[] = [];
+  async getUnreadCount(userId: number): Promise<{ count: number }> {
+    // Lấy từ Redis cache trước
+    let count = await this.unreadCounterService.getCount(userId);
     
-    for (const userId of userIds) {
-      try {
-        const notification = await this.create({
-          userId,
-          title,
-          content,
-          type
-        });
-        
-        if (metadata) {
-          notification['metadata'] = metadata;
-        }
-        
-        notifications.push(notification);
-      } catch (error) {
-        this.logger.error(`Failed to create notification for user ${userId}: ${error.message}`);
+    // Nếu counter là 0, kiểm tra lại với database (đề phòng mất đồng bộ)
+    if (count === 0) {
+      const dbCount = await this.notificationRepository.count({
+        where: { user_id: userId, is_read: false }
+      });
+      
+      if (dbCount > 0) {
+        // Nếu có sự khác biệt, đồng bộ lại counter
+        await this.unreadCounterService.sync(userId, dbCount);
+        count = dbCount;
       }
     }
     
-    return notifications;
+    return { count };
   }
 
-  // Phương thức gửi thông báo đến tất cả người dùng trong phòng ban
-  async notifyDepartment(
-    departmentId: number,
-    title: string,
-    content: string,
-    type: string,
-    excludeUserIds: number[] = []
-  ): Promise<Notification[]> {
-    // Lấy tất cả người dùng trong phòng ban
-    const users = await this.userRepository.find({
-      where: { department_id: departmentId }
-    });
+  async syncAllUnreadCounters(): Promise<void> {
+    // Lấy danh sách người dùng
+    const users = await this.userRepository.find({ select: ['user_id'] });
     
-    // Lọc ra những người dùng không bị loại trừ
-    const userIds = users
-      .map(user => user.user_id)
-      .filter(id => !excludeUserIds.includes(id));
-    
-    return this.sendBulkNotification(userIds, title, content, type);
-  }
-
-  // Phương thức "Gọi ý" thông báo dựa trên người dùng và tài nguyên
-  async suggestNotifications(userId: number, resourceType: string, resourceId: number): Promise<void> {
-    // Đây là ví dụ về cách gợi ý thông báo thông minh dựa trên người dùng và tài nguyên
-    switch (resourceType) {
-      case 'task':
-        // Ví dụ: Gợi ý nhiệm vụ liên quan
-        const relatedTasks = await this.findRelatedItems('task', resourceId, userId);
-        if (relatedTasks.length > 0) {
-          await this.create({
-            userId,
-            title: "Gợi ý nhiệm vụ liên quan",
-            content: `Có ${relatedTasks.length} nhiệm vụ liên quan đến nhiệm vụ hiện tại của bạn`,
-            type: "Task"
-          });
-        }
-        break;
-        
-      case 'course':
-        // Ví dụ: Gợi ý khóa học tiếp theo
-        const recommendedCourses = await this.findRelatedItems('course', resourceId, userId);
-        if (recommendedCourses.length > 0) {
-          await this.create({
-            userId,
-            title: "Gợi ý khóa học",
-            content: `Có ${recommendedCourses.length} khóa học bạn có thể quan tâm`,
-            type: "Training"
-          });
-        }
-        break;
+    for (const user of users) {
+      const count = await this.notificationRepository.count({
+        where: { user_id: user.user_id, is_read: false }
+      });
+      
+      await this.unreadCounterService.sync(user.user_id, count);
     }
-  }
-
-  // Phương thức ví dụ cho findRelatedItems (bạn cần phát triển theo logic thực tế)
-  private async findRelatedItems(itemType: string, itemId: number, userId: number): Promise<any[]> {
-    // Đây chỉ là stub, bạn cần thực hiện logic thực tế để tìm các tài nguyên liên quan
-    return [];
   }
 }

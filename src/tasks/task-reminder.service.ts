@@ -1,24 +1,29 @@
 // src/tasks/task-reminder.service.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThanOrEqual, MoreThan, Not, Between, LessThan, In } from 'typeorm';
 import { Task, TaskStatus } from '../entities/task.entity';
 import { Notification, NotificationType } from '../entities/notification.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { NotificationsService } from '../notifications/notifications.service';
+import { QueueService } from '../shared/services/queue.service';
 
 @Injectable()
-export class TaskReminderService {
+export class TaskReminderService implements OnModuleInit {
   private readonly logger = new Logger(TaskReminderService.name);
 
   constructor(
     @InjectRepository(Task)
     private taskRepository: Repository<Task>,
-    private notificationsService: NotificationsService,
+    private queueService: QueueService,
   ) {}
+  
+  onModuleInit() {
+    // Khởi động worker cho các nhiệm vụ nhắc nhở
+    this.queueService.startWorker('task_reminder', this.processTaskReminder.bind(this));
+  }
 
   @Cron(CronExpression.EVERY_DAY_AT_8AM)
-  async sendTaskReminders() {
+  async scheduleDailyReminders() {
     // Lấy danh sách nhiệm vụ sắp đến hạn (trong 2 ngày)
     const now = new Date();
     const twoDaysLater = new Date();
@@ -34,128 +39,55 @@ export class TaskReminderService {
     
     this.logger.log(`Found ${upcomingTasks.length} upcoming tasks to remind users about`);
     
-    // Gửi thông báo cho từng người dùng
+    // Thêm nhiệm vụ vào hàng đợi để gửi thông báo nhắc nhở
+    const reminderJobs = [];
+    
     for (const task of upcomingTasks) {
-      // Định dạng ngày deadline
-      const deadlineFormatted = task.deadline.toLocaleDateString('vi-VN', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      
-      await this.notificationsService.create({
+      const jobId = await this.queueService.enqueue('task_reminder', {
+        taskId: task.task_id,
         userId: task.assigned_to,
-        title: 'Nhắc nhở nhiệm vụ sắp đến hạn',
-        content: `Nhiệm vụ "${task.title}" sẽ đến hạn vào ${deadlineFormatted}`,
-        type: NotificationType.TASK
+        title: task.title,
+        deadline: task.deadline,
       });
       
-      this.logger.debug(`Sent deadline reminder for task ${task.task_id} to user ${task.assigned_to}`);
+      reminderJobs.push({ taskId: task.task_id, jobId });
+      
+      this.logger.debug(`Queued reminder for task ${task.task_id}`);
     }
     
-    return upcomingTasks.length;
+    return {
+      message: `Scheduled reminders for ${upcomingTasks.length} tasks`,
+      jobs: reminderJobs,
+    };
   }
   
-  @Cron('0 9 * * 1') // Chạy vào 9h sáng mỗi thứ 2
-  async sendWeeklySummary() {
-    this.logger.log('Starting weekly task summary job');
+  // Xử lý nhắc nhở nhiệm vụ từ queue
+  private async processTaskReminder(data: any): Promise<any> {
+    const { taskId, userId, title, deadline } = data;
     
-    // Lấy tất cả người dùng có nhiệm vụ
-    const users = await this.taskRepository
-      .createQueryBuilder('task')
-      .select('DISTINCT task.assigned_to', 'userId')
-      .getRawMany();
-    
-    const userIds = users.map(u => u.userId);
-    this.logger.log(`Found ${userIds.length} users with tasks to send summaries`);
-    
-    // Gửi báo cáo tổng hợp cho từng người dùng
-    for (const userId of userIds) {
-      try {
-        // Đếm số lượng nhiệm vụ theo trạng thái
-        const pendingTasks = await this.taskRepository.count({
-          where: {
-            assigned_to: userId,
-            status: TaskStatus.PENDING
-          }
-        });
-        
-        const inProgressTasks = await this.taskRepository.count({
-          where: {
-            assigned_to: userId,
-            status: TaskStatus.IN_PROGRESS
-          }
-        });
-        
-        const completedLastWeek = await this.taskRepository.count({
-          where: {
-            assigned_to: userId,
-            status: TaskStatus.COMPLETED,
-            updated_at: Between(
-              new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-              new Date()
-            )
-          }
-        });
-        
-        // Gửi thông báo tổng hợp hàng tuần
-        await this.notificationsService.create({
-          userId,
-          title: 'Báo cáo nhiệm vụ hàng tuần',
-          content: `Tổng quan nhiệm vụ: ${pendingTasks} chưa bắt đầu, ${inProgressTasks} đang thực hiện. Bạn đã hoàn thành ${completedLastWeek} nhiệm vụ trong tuần qua.`,
-          type: NotificationType.TASK
-        });
-        
-        this.logger.debug(`Sent weekly summary to user ${userId}`);
-      } catch (error) {
-        this.logger.error(`Error sending weekly summary to user ${userId}: ${error.message}`);
-      }
-    }
-  }
-  
-  @Cron(CronExpression.EVERY_DAY_AT_NOON)
-  async checkOverdueTasks() {
-    this.logger.log('Checking for overdue tasks');
-    
-    const now = new Date();
-    
-    // Tìm các nhiệm vụ đã quá hạn nhưng chưa hoàn thành
-    const overdueTasks = await this.taskRepository.find({
-      where: {
-        deadline: LessThan(now),
-        status: In([TaskStatus.PENDING, TaskStatus.IN_PROGRESS])
-      },
-      relations: ['assignedToUser', 'assignedByUser']
+    // Định dạng deadline
+    const deadlineDate = new Date(deadline);
+    const formattedDeadline = deadlineDate.toLocaleDateString('vi-VN', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
     
-    this.logger.log(`Found ${overdueTasks.length} overdue tasks`);
+    // Tạo thông báo nhắc nhở bằng cách thêm vào hàng đợi thông báo
+    const notificationJobId = await this.queueService.enqueue('notification', {
+      userId,
+      title: 'Nhắc nhở nhiệm vụ sắp đến hạn',
+      content: `Nhiệm vụ "${title}" sẽ đến hạn vào ${formattedDeadline}`,
+      type: 'Task',
+    });
     
-    // Gửi thông báo cho người được giao nhiệm vụ và người giao nhiệm vụ
-    for (const task of overdueTasks) {
-      // Tính số ngày quá hạn
-      const daysOverdue = Math.floor((now.getTime() - task.deadline.getTime()) / (24 * 60 * 60 * 1000));
-      
-      // Thông báo cho người được giao nhiệm vụ
-      await this.notificationsService.create({
-        userId: task.assigned_to,
-        title: 'Nhiệm vụ quá hạn',
-        content: `Nhiệm vụ "${task.title}" đã quá hạn ${daysOverdue} ngày. Vui lòng hoàn thành hoặc cập nhật trạng thái.`,
-        type: NotificationType.TASK
-      });
-      
-      // Thông báo cho người giao nhiệm vụ (nếu khác người được giao)
-      if (task.assigned_by !== task.assigned_to) {
-        await this.notificationsService.create({
-          userId: task.assigned_by,
-          title: 'Nhiệm vụ quá hạn',
-          content: `Nhiệm vụ "${task.title}" được giao cho ${task.assignedToUser.full_name} đã quá hạn ${daysOverdue} ngày.`,
-          type: NotificationType.TASK
-        });
-      }
-      
-      this.logger.debug(`Sent overdue notification for task ${task.task_id}`);
-    }
+    return {
+      taskId,
+      userId,
+      notificationJobId,
+      message: `Reminder for task ${taskId} has been sent to user ${userId}`
+    };
   }
 }

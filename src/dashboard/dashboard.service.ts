@@ -1,5 +1,5 @@
 // src/dashboard/dashboard.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, IsNull, Between } from 'typeorm';
 import { User } from '../entities/user.entity';
@@ -8,6 +8,8 @@ import { Attendance } from '../entities/attendance.entity';
 import { UserCourse } from '../entities/user-course.entity';
 import { Course } from '../entities/course.entity';
 import { ForumPost } from '../entities/forum-post.entity';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class DashboardService {
@@ -29,9 +31,18 @@ export class DashboardService {
     
     @InjectRepository(ForumPost)
     private forumPostsRepository: Repository<ForumPost>,
+    
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   async getStats() {
+    // Kiểm tra cache
+    const cachedStats = await this.cacheManager.get('dashboard_stats');
+    
+    if (cachedStats) {
+      return cachedStats;
+    }
+    
     // Tổng số người dùng
     const totalUsers = await this.usersRepository.count();
     
@@ -58,15 +69,27 @@ export class DashboardService {
       .where('post.created_at >= :date', { date: thirtyDaysAgo })
       .getCount();
     
-    return {
+    const stats = {
       totalUsers,
       usersByRole,
       tasksByStatus,
       recentPosts,
     };
+    
+    // Cache lại kết quả trong 15 phút
+    await this.cacheManager.set('dashboard_stats', stats, 900);
+    
+    return stats;
   }
 
   async getAttendanceStats() {
+    // Kiểm tra cache
+    const cachedStats = await this.cacheManager.get('attendance_stats');
+    
+    if (cachedStats) {
+      return cachedStats;
+    }
+    
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -98,14 +121,26 @@ export class DashboardService {
       .andWhere('attendance.overtime_hours IS NOT NULL')
       .getRawOne();
     
-    return {
+    const stats = {
       checkInsToday,
       pendingLeaves,
       overtimeHours: overtimeHours?.total || 0,
     };
+    
+    // Cache lại kết quả trong 30 phút
+    await this.cacheManager.set('attendance_stats', stats, 1800);
+    
+    return stats;
   }
 
   async getTrainingStats() {
+    // Kiểm tra cache
+    const cachedStats = await this.cacheManager.get('training_stats');
+    
+    if (cachedStats) {
+      return cachedStats;
+    }
+    
     // Số khóa học đang hoạt động
     const activeCourses = await this.coursesRepository.count({
       where: {
@@ -128,10 +163,22 @@ export class DashboardService {
       .andWhere('userCourse.score IS NOT NULL')
       .getRawOne();
     
-    return {
+    const stats = {
       activeCourses,
       courseRegistrationByStatus,
       averageScore: averageScore?.average || 0,
     };
+    
+    // Cache lại kết quả trong 1 giờ
+    await this.cacheManager.set('training_stats', stats, 3600);
+    
+    return stats;
+  }
+  
+  // Phương thức để xóa cache khi cần
+  async invalidateDashboardCache() {
+    await this.cacheManager.del('dashboard_stats');
+    await this.cacheManager.del('attendance_stats');
+    await this.cacheManager.del('training_stats');
   }
 }

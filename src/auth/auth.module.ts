@@ -13,6 +13,7 @@ import { Document } from '../entities/document.entity';
 import { Profile } from '../entities/profile.entity';
 import { ProfilesService } from '../profiles/profiles.service';
 import { Notification } from '../entities/notification.entity';
+import { RedisJwtService } from './services/redis-jwt.service';
 
 @Module({
   imports: [
@@ -28,8 +29,14 @@ import { Notification } from '../entities/notification.entity';
       inject: [ConfigService],
     }),
   ],
-  providers: [AuthService, JwtStrategy, LocalStrategy, ProfilesService],
+  providers: [
+    AuthService, 
+    JwtStrategy, 
+    LocalStrategy, 
+    ProfilesService, 
+    RedisJwtService
+  ],
   controllers: [AuthController],
-  exports: [AuthService],
+  exports: [AuthService, RedisJwtService],
 })
 export class AuthModule {}

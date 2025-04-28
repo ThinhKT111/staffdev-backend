@@ -1,5 +1,5 @@
 // src/reports/reports.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
 import { Attendance } from '../entities/attendance.entity';
@@ -8,9 +8,12 @@ import { Task } from '../entities/task.entity';
 import { User } from '../entities/user.entity';
 import * as ExcelJS from 'exceljs';
 import { Readable } from 'stream';
+import * as fs from 'fs';
+import * as path from 'path';
+import { QueueService } from '../shared/services/queue.service';
 
 @Injectable()
-export class ReportsService {
+export class ReportsService implements OnModuleInit {
   constructor(
     @InjectRepository(Attendance)
     private attendanceRepository: Repository<Attendance>,
@@ -23,7 +26,14 @@ export class ReportsService {
     
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    
+    private queueService: QueueService,
   ) {}
+  
+  onModuleInit() {
+    // Khởi động worker xử lý báo cáo
+    this.queueService.startWorker('export_report', this.processReportExport.bind(this));
+  }
 
   async getAttendanceReport(startDate: string, endDate: string, departmentId?: number) {
     const start = new Date(startDate);
@@ -93,66 +103,100 @@ export class ReportsService {
     };
   }
 
+  // Thêm phương thức để xử lý báo cáo từ queue
+  private async processReportExport(data: any): Promise<any> {
+    const { reportType, startDate, endDate, departmentId, format } = data;
+    
+    // Xử lý xuất báo cáo dựa trên loại
+    if (reportType === 'attendance') {
+      const reportData = await this.getAttendanceReport(startDate, endDate, departmentId);
+      
+      // Tạo workbook
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Attendance Report');
+      
+      // Thêm tiêu đề
+      worksheet.addRow([`Báo cáo chuyên cần từ ${startDate} đến ${endDate}`]);
+      worksheet.addRow([]);
+      
+      // Tổng quan
+      worksheet.addRow(['Tổng quan']);
+      worksheet.addRow(['Tổng số điểm danh', reportData.summary.totalCheckIns]);
+      worksheet.addRow(['Tổng số đơn nghỉ phép', reportData.summary.totalLeaves]);
+      worksheet.addRow(['Đơn nghỉ phép được chấp nhận', reportData.summary.totalApprovedLeaves]);
+      worksheet.addRow(['Đơn nghỉ phép bị từ chối', reportData.summary.totalRejectedLeaves]);
+      worksheet.addRow([]);
+      
+      // Chi tiết người dùng
+      worksheet.addRow(['Chi tiết theo người dùng']);
+      worksheet.addRow(['ID', 'Họ tên', 'Phòng ban', 'Số lần điểm danh', 'Số đơn nghỉ phép', 'Giờ tăng ca']);
+      
+      reportData.userStatistics.forEach((user: any) => {
+        worksheet.addRow([
+          user.userId,
+          user.fullName,
+          user.department,
+          user.checkIns,
+          user.leaves,
+          user.overtimeHours
+        ]);
+      });
+      
+      // Đảm bảo thư mục tồn tại
+      const reportsDir = path.join(process.cwd(), 'uploads', 'reports');
+      if (!fs.existsSync(reportsDir)) {
+        fs.mkdirSync(reportsDir, { recursive: true });
+      }
+      
+      // Tạo tên file và đường dẫn
+      const timestamp = Date.now();
+      const fileName = `attendance-report-${startDate}-to-${endDate}-${timestamp}.${format === 'excel' ? 'xlsx' : 'csv'}`;
+      const filePath = path.join(reportsDir, fileName);
+      
+      // Lưu file
+      if (format === 'excel') {
+        await workbook.xlsx.writeFile(filePath);
+      } else {
+        await workbook.csv.writeFile(filePath);
+      }
+      
+      // Trả về thông tin file
+      return {
+        fileName,
+        filePath: `/reports/${fileName}`,
+        format,
+        url: `/api/reports/download/${fileName}`,
+        timestamp,
+      };
+    }
+    
+    throw new Error(`Unsupported report type: ${reportType}`);
+  }
+
+  // Cập nhật phương thức xuất báo cáo để sử dụng queue
   async exportAttendanceReport(
-    startDate: string, 
-    endDate: string, 
-    departmentId?: number, 
+    startDate: string,
+    endDate: string,
+    departmentId?: number,
     format: 'excel' | 'csv' = 'excel'
-  ): Promise<Readable> {
-    // Lấy dữ liệu báo cáo
-    const reportData = await this.getAttendanceReport(startDate, endDate, departmentId);
-    
-    // Tạo workbook
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Attendance Report');
-    
-    // Thêm tiêu đề
-    worksheet.addRow([`Báo cáo chuyên cần từ ${startDate} đến ${endDate}`]);
-    worksheet.addRow([]);
-    
-    // Tổng quan
-    worksheet.addRow(['Tổng quan']);
-    worksheet.addRow(['Tổng số điểm danh', reportData.summary.totalCheckIns]);
-    worksheet.addRow(['Tổng số đơn nghỉ phép', reportData.summary.totalLeaves]);
-    worksheet.addRow(['Đơn nghỉ phép được chấp nhận', reportData.summary.totalApprovedLeaves]);
-    worksheet.addRow(['Đơn nghỉ phép bị từ chối', reportData.summary.totalRejectedLeaves]);
-    worksheet.addRow([]);
-    
-    // Chi tiết người dùng
-    worksheet.addRow(['Chi tiết theo người dùng']);
-    worksheet.addRow(['ID', 'Họ tên', 'Phòng ban', 'Số lần điểm danh', 'Số đơn nghỉ phép', 'Giờ tăng ca']);
-    
-    reportData.userStatistics.forEach((user: any) => {
-      worksheet.addRow([
-        user.userId,
-        user.fullName,
-        user.department,
-        user.checkIns,
-        user.leaves,
-        user.overtimeHours
-      ]);
+  ): Promise<any> {
+    const jobId = await this.queueService.enqueue('export_report', {
+      reportType: 'attendance',
+      startDate,
+      endDate,
+      departmentId,
+      format,
     });
     
-    // Tạo buffer
-    const buffer = await (format === 'excel' ? 
-      workbook.xlsx.writeBuffer() : 
-      workbook.csv.writeBuffer());
-    
-    // Tạo stream từ buffer
-    const stream = new Readable();
-    stream.push(buffer);
-    stream.push(null);
-    
-    return stream;
+    return {
+      message: 'Report generation has been queued',
+      jobId,
+      status: 'pending',
+    };
   }
 
-  async getTrainingReport(startDate: string, endDate: string): Promise<any> {
-    // Cài đặt mã này dựa trên yêu cầu của bạn
-    return { message: "Not implemented yet" };
-  }
-
-  async getTaskReport(startDate: string, endDate: string, departmentId?: number): Promise<any> {
-    // Cài đặt mã này dựa trên yêu cầu của bạn
-    return { message: "Not implemented yet" };
+  // Phương thức kiểm tra trạng thái báo cáo
+  async getReportStatus(jobId: string): Promise<any> {
+    return this.queueService.getJob(jobId);
   }
 }

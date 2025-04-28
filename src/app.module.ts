@@ -1,5 +1,5 @@
 // src/app.module.ts
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
@@ -21,6 +21,8 @@ import { SharedModule } from './shared/shared.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
+import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
+
 
 @Module({
   imports: [
@@ -41,6 +43,18 @@ import * as redisStore from 'cache-manager-redis-store';
         synchronize: false,
       }),
     }),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        store: redisStore,
+        host: configService.get('REDIS_HOST', 'localhost'),
+        port: configService.get('REDIS_PORT', 6379),
+        ttl: 60 * 60, // 1 giờ mặc định
+        max: 1000, // Số lượng items tối đa trong cache
+      }),
+      inject: [ConfigService],
+    }),
     AuthModule,
     UsersModule,
     TrainingModule,
@@ -55,19 +69,14 @@ import * as redisStore from 'cache-manager-redis-store';
     SeedModule,
     SharedModule,
     ProfilesModule,
-    CacheModule.registerAsync({
-      isGlobal: true,
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        store: redisStore,
-        host: configService.get('REDIS_HOST', 'localhost'),
-        port: configService.get('REDIS_PORT', 6379),
-        ttl: 60 * 60, // 1 giờ
-      }),
-      inject: [ConfigService],
-    }),
   ],
   controllers: [AppController, DatabaseController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(GlobalRateLimitMiddleware)
+      .forRoutes('*');
+  }
+}

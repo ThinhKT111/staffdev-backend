@@ -1,5 +1,5 @@
 // src/auth/auth.service.ts
-import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException, Inject } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -11,6 +11,9 @@ import { Document } from '../entities/document.entity';
 import { Profile } from '../entities/profile.entity';
 import { ProfilesService } from '../profiles/profiles.service';
 import { Notification, NotificationType } from '../entities/notification.entity';
+import { RedisJwtService } from './services/redis-jwt.service';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class AuthService {
@@ -25,6 +28,8 @@ export class AuthService {
     private notificationsRepository: Repository<Notification>,
     private jwtService: JwtService,
     private profileService: ProfilesService,
+    private redisJwtService: RedisJwtService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   async validateUser(cccd: string, password: string): Promise<any> {
@@ -81,10 +86,34 @@ export class AuthService {
     
     await this.usersRepository.save(user);
     
+    // Thu hồi tất cả token hiện tại sau khi đổi mật khẩu
+    await this.redisJwtService.revokeAllUserTokens(userId);
+    
     return { message: 'Mật khẩu đã được thay đổi thành công' };
   }
 
   async recordDeviceLogin(userId: number, deviceId: string, deviceName: string): Promise<void> {
+    const deviceInfo = {
+      deviceId,
+      deviceName,
+      lastLogin: new Date().toISOString(),
+    };
+    
+    // Lưu thông tin thiết bị vào Redis
+    await this.cacheManager.set(
+      `user_device:${userId}:${deviceId}`,
+      deviceInfo,
+      86400 * 30 // 30 ngày
+    );
+    
+    // Thêm deviceId vào danh sách thiết bị của user
+    const userDevices = await this.cacheManager.get<string[]>(`user_devices:${userId}`) || [];
+    
+    if (!userDevices.includes(deviceId)) {
+      userDevices.push(deviceId);
+      await this.cacheManager.set(`user_devices:${userId}`, userDevices, 86400 * 30);
+    }
+    
     // Sử dụng bảng Notifications để lưu thông tin đăng nhập
     const content = `Đăng nhập từ thiết bị: ${deviceName} (${deviceId})`;
     
@@ -98,6 +127,32 @@ export class AuthService {
     });
   }
 
+  async getUserDevices(userId: number): Promise<any[]> {
+    const deviceIds = await this.cacheManager.get<string[]>(`user_devices:${userId}`) || [];
+    const devices = [];
+    
+    for (const deviceId of deviceIds) {
+      const deviceInfo = await this.cacheManager.get(`user_device:${userId}:${deviceId}`);
+      if (deviceInfo) {
+        devices.push(deviceInfo);
+      }
+    }
+    
+    return devices;
+  }
+
+  async logoutFromDevice(userId: number, deviceId: string): Promise<boolean> {
+    // Xóa thông tin thiết bị
+    await this.cacheManager.del(`user_device:${userId}:${deviceId}`);
+    
+    // Cập nhật danh sách thiết bị
+    const userDevices = await this.cacheManager.get<string[]>(`user_devices:${userId}`) || [];
+    const updatedDevices = userDevices.filter(id => id !== deviceId);
+    await this.cacheManager.set(`user_devices:${userId}`, updatedDevices, 86400 * 30);
+    
+    return true;
+  }
+
   async forgotPassword(email: string) {
     // Tìm người dùng theo email
     const user = await this.usersRepository.findOne({ where: { email } });
@@ -108,56 +163,46 @@ export class AuthService {
     // Tạo token ngẫu nhiên
     const token = crypto.randomBytes(32).toString('hex');
     
-    // Lưu token vào bảng Documents (category = 'reset_password')
-    const document = this.documentsRepository.create({
-      title: `Reset password token for user ${user.user_id}`,
-      file_url: token, // Sử dụng file_url để lưu token
-      category: 'reset_password',
-      uploaded_by: user.user_id,
-      uploaded_at: new Date(),
-    });
+    // Lưu token vào Redis với thời hạn 1 giờ
+    await this.cacheManager.set(`reset_password:${token}`, user.user_id, 3600);
     
-    await this.documentsRepository.save(document);
+    // Trong môi trường thực tế, gửi email với link reset password
     
-    // TODO: Gửi email với link reset password (thay thế bằng trả về token cho demo)
-    return { message: 'Yêu cầu đặt lại mật khẩu đã được gửi', token };
+    return { 
+      message: 'Yêu cầu đặt lại mật khẩu đã được gửi', 
+      token, // Chỉ trả về token trong môi trường phát triển
+    };
   }
 
   async resetPassword(token: string, newPassword: string) {
-    // Tìm token trong bảng Documents
-    const document = await this.documentsRepository.findOne({
-      where: { 
-        file_url: token,
-        category: 'reset_password'
-      },
-      relations: ['uploader']
-    });
+    // Tìm user_id từ token trong Redis
+    const userId = await this.cacheManager.get(`reset_password:${token}`);
     
-    if (!document) {
-      throw new NotFoundException('Token không hợp lệ');
+    if (!userId) {
+      throw new NotFoundException('Token không hợp lệ hoặc đã hết hạn');
     }
     
-    // Kiểm tra token có quá hạn không (1 giờ)
-    const tokenCreationTime = new Date(document.uploaded_at).getTime();
-    const currentTime = new Date().getTime();
-    const oneHourInMs = 60 * 60 * 1000;
+    // Tìm user
+    const user = await this.usersRepository.findOne({ where: { user_id: userId } });
     
-    if (currentTime - tokenCreationTime > oneHourInMs) {
-      await this.documentsRepository.remove(document);
-      throw new BadRequestException('Token đã hết hạn');
+    if (!user) {
+      throw new NotFoundException('Không tìm thấy người dùng');
     }
     
-    // Lấy người dùng
-    const user = document.uploader;
+    // Hash mật khẩu mới
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
     
     // Cập nhật mật khẩu
-    user.password = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
     user.updated_at = new Date();
     
     await this.usersRepository.save(user);
     
-    // Xóa token sau khi sử dụng
-    await this.documentsRepository.remove(document);
+    // Xóa token
+    await this.cacheManager.del(`reset_password:${token}`);
+    
+    // Thu hồi tất cả token hiện tại
+    await this.redisJwtService.revokeAllUserTokens(user.user_id);
     
     return { message: 'Mật khẩu đã được cập nhật thành công' };
   }
@@ -236,15 +281,17 @@ export class AuthService {
       }
     }
     
-    // Đăng nhập thành công, tạo JWT
+    // Đăng nhập thành công, tạo JWT sử dụng RedisJwtService
     const payload = { 
       sub: user.user_id, 
       cccd: user.cccd,
       role: user.role 
     };
     
+    const access_token = await this.redisJwtService.generateToken(payload);
+    
     return {
-      access_token: this.jwtService.sign(payload),
+      access_token,
       user: {
         id: user.user_id,
         cccd: user.cccd,
@@ -255,5 +302,9 @@ export class AuthService {
         has2FA
       }
     };
+  }
+  
+  async logout(token: string): Promise<boolean> {
+    return this.redisJwtService.revokeToken(token);
   }
 }

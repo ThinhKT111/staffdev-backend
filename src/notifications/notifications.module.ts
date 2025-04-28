@@ -9,6 +9,7 @@ import { User } from '../entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WebSocketRateLimiter } from '../shared/websocket-rate-limit';
+import { UnreadCounterService } from './services/unread-counter.service';
 
 @Module({
   imports: [
@@ -22,8 +23,13 @@ import { WebSocketRateLimiter } from '../shared/websocket-rate-limit';
       }),
     }),
   ],
-  providers: [NotificationsService, NotificationsGateway, WebSocketRateLimiter],
+  providers: [
+    NotificationsService, 
+    NotificationsGateway, 
+    WebSocketRateLimiter,
+    UnreadCounterService
+  ],
   controllers: [NotificationsController],
-  exports: [NotificationsService, NotificationsGateway],
+  exports: [NotificationsService, NotificationsGateway, UnreadCounterService],
 })
 export class NotificationsModule {}
