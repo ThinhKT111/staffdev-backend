@@ -6,10 +6,10 @@ import { v4 as uuidv4 } from 'uuid';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
-export interface Job {
+export interface Job<T = any> {
   id: string;
   type: string;
-  data: any;
+  data: T;
   status: JobStatus;
   createdAt: string;
   updatedAt: string;
@@ -25,10 +25,10 @@ export class QueueService {
   constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
 
   // Thêm job vào hàng đợi
-  async enqueue(type: string, data: any): Promise<string> {
+  async enqueue<T = any>(type: string, data: T): Promise<string> {
     const jobId = uuidv4();
     
-    const job: Job = {
+    const job: Job<T> = {
       id: jobId,
       type,
       data,
@@ -41,7 +41,7 @@ export class QueueService {
     await this.cacheManager.set(`job:${jobId}`, job);
     
     // Thêm job vào hàng đợi
-    const redisClient = (this.cacheManager.store as any).getClient();
+    const redisClient = (this.cacheManager as any).store.getClient();
     await redisClient.lpush(`queue:${type}`, jobId);
     
     this.logger.debug(`Added job ${jobId} to queue ${type}`);
@@ -56,7 +56,7 @@ export class QueueService {
 
   // Xử lý job trong hàng đợi
   async processQueue(type: string, processor: (data: any) => Promise<any>): Promise<boolean> {
-    const redisClient = (this.cacheManager.store as any).getClient();
+    const redisClient = (this.cacheManager as any).store.getClient();
     const queueKey = `queue:${type}`;
     
     // Lấy job từ cuối hàng đợi

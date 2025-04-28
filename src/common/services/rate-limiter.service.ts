@@ -9,7 +9,7 @@ export class RateLimiterService {
 
   async isRateLimited(key: string, limit: number, windowSeconds: number): Promise<boolean> {
     // Lấy Redis client từ cache manager
-    const redisClient = (this.cacheManager.store as any).getClient();
+    const redisClient = (this.cacheManager as any).store.getClient();
     const now = Date.now();
     
     // Sử dụng Redis Sorted Set để lưu timestamps
