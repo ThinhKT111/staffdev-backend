@@ -9,13 +9,13 @@ export class UnreadCounterService {
 
   // Tăng số lượng thông báo chưa đọc
   async increment(userId: number): Promise<number> {
-    const redisClient = this.cacheManager.store.getClient();
+    const redisClient = (this.cacheManager.store as any).getClient();
     return redisClient.incr(`unread:${userId}`);
   }
 
   // Giảm số lượng thông báo chưa đọc
   async decrement(userId: number): Promise<number> {
-    const redisClient = this.cacheManager.store.getClient();
+    const redisClient = (this.cacheManager.store as any).getClient();
     const count = await redisClient.decr(`unread:${userId}`);
     
     // Đảm bảo không âm
@@ -29,20 +29,20 @@ export class UnreadCounterService {
 
   // Lấy số lượng thông báo chưa đọc
   async getCount(userId: number): Promise<number> {
-    const redisClient = this.cacheManager.store.getClient();
+    const redisClient = (this.cacheManager.store as any).getClient();
     const count = await redisClient.get(`unread:${userId}`);
     return count ? parseInt(count, 10) : 0;
   }
 
   // Đặt lại counter về 0
   async reset(userId: number): Promise<void> {
-    const redisClient = this.cacheManager.store.getClient();
+    const redisClient = (this.cacheManager.store as any).getClient();
     await redisClient.set(`unread:${userId}`, 0);
   }
 
   // Đồng bộ counter với số thực tế trong database
   async sync(userId: number, count: number): Promise<void> {
-    const redisClient = this.cacheManager.store.getClient();
+    const redisClient = (this.cacheManager.store as any).getClient();
     await redisClient.set(`unread:${userId}`, count);
   }
 }
