@@ -283,7 +283,7 @@ export class AuthService {
     
     // Đăng nhập thành công, tạo JWT sử dụng RedisJwtService
     const payload = { 
-      sub: user.user_id, 
+      sub: user.userId, 
       cccd: user.cccd,
       role: user.role 
     };

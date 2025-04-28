@@ -8,7 +8,8 @@ export class RateLimiterService {
   constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
 
   async isRateLimited(key: string, limit: number, windowSeconds: number): Promise<boolean> {
-    const redisClient = this.cacheManager.store.client;
+    // Lấy Redis client từ cache manager
+    const redisClient = this.cacheManager.store.getClient();
     const now = Date.now();
     
     // Sử dụng Redis Sorted Set để lưu timestamps

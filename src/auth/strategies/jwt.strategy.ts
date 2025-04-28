@@ -1,4 +1,3 @@
-// src/auth/strategies/jwt.strategy.ts
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
@@ -24,10 +23,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const token = ExtractJwt.fromAuthHeaderAsBearerToken()(req);
     
     // Kiểm tra token có trong blacklist không
-    const isValid = await this.redisJwtService.validateToken(token);
-    
-    if (!isValid) {
-      throw new UnauthorizedException('Token đã bị thu hồi hoặc không hợp lệ');
+    if (token) {
+      const isValid = await this.redisJwtService.validateToken(token);
+      
+      if (!isValid) {
+        throw new UnauthorizedException('Token đã bị thu hồi hoặc không hợp lệ');
+      }
+    } else {
+      throw new UnauthorizedException('Token không hợp lệ');
     }
     
     return { 

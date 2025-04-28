@@ -16,13 +16,13 @@ export class CommentCounterService {
 
   // Tăng số lượng comment của post
   async increment(postId: number): Promise<number> {
-    const redisClient = this.cacheManager.store.client;
+    const redisClient = this.cacheManager.store.getClient();
     return redisClient.incr(`post_comments:${postId}`);
   }
 
   // Giảm số lượng comment của post
   async decrement(postId: number): Promise<number> {
-    const redisClient = this.cacheManager.store.client;
+    const redisClient = this.cacheManager.store.getClient();
     const count = await redisClient.decr(`post_comments:${postId}`);
     
     // Đảm bảo không âm
@@ -36,20 +36,20 @@ export class CommentCounterService {
 
   // Lấy số lượng comment của post
   async getCount(postId: number): Promise<number> {
-    const redisClient = this.cacheManager.store.client;
+    const redisClient = this.cacheManager.store.getClient();
     const count = await redisClient.get(`post_comments:${postId}`);
     return count ? parseInt(count, 10) : 0;
   }
 
   // Đặt số lượng comment
   async setCount(postId: number, count: number): Promise<void> {
-    const redisClient = this.cacheManager.store.client;
+    const redisClient = this.cacheManager.store.getClient();
     await redisClient.set(`post_comments:${postId}`, count);
   }
 
   // Xóa counter
   async removeCount(postId: number): Promise<void> {
-    const redisClient = this.cacheManager.store.client;
+    const redisClient = this.cacheManager.store.getClient();
     await redisClient.del(`post_comments:${postId}`);
   }
 

@@ -20,7 +20,7 @@ export class AuthController {
   @UseGuards(LocalAuthGuard, RateLimitGuard)
   @RateLimit(5, 60) // 5 requests/minute
   @Post('login')
-  async login(@Request() req, @Body('token2FA') token2FA?: string) {
+  async login(@Request() req, @Body() loginDto: LoginDto, @Body('token2FA') token2FA?: string) {
     return this.authService.login(req.user, token2FA);
   }
 
@@ -46,12 +46,6 @@ export class AuthController {
   @Post('register')
   async register(@Body() createUserDto: CreateUserDto) {
     return this.authService.register(createUserDto);
-  }
-  
-  @UseGuards(LocalAuthGuard)
-  @Post('login')
-  async login(@Request() req, @Body('token2FA') token2FA?: string) {
-    return this.authService.login(req.user, token2FA);
   }
 
   @Patch('change-password')

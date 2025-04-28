@@ -41,7 +41,7 @@ export class QueueService {
     await this.cacheManager.set(`job:${jobId}`, job);
     
     // Thêm job vào hàng đợi
-    const redisClient = this.cacheManager.store.client;
+    const redisClient = this.cacheManager.store.getClient();
     await redisClient.lpush(`queue:${type}`, jobId);
     
     this.logger.debug(`Added job ${jobId} to queue ${type}`);
@@ -56,7 +56,7 @@ export class QueueService {
 
   // Xử lý job trong hàng đợi
   async processQueue(type: string, processor: (data: any) => Promise<any>): Promise<boolean> {
-    const redisClient = this.cacheManager.store.client;
+    const redisClient = this.cacheManager.store.getClient();
     const queueKey = `queue:${type}`;
     
     // Lấy job từ cuối hàng đợi

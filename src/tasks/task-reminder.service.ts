@@ -50,7 +50,7 @@ export class TaskReminderService implements OnModuleInit {
         deadline: task.deadline,
       });
       
-      reminderJobs.push({ taskId: task.task_id, jobId });
+      reminderJobs.push({ taskId: task.task_id, jobId } as any);
       
       this.logger.debug(`Queued reminder for task ${task.task_id}`);
     }

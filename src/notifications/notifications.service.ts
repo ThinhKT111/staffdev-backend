@@ -84,10 +84,10 @@ export class NotificationsService implements OnModuleInit {
           type,
         });
         
-        results.push({ userId, jobId, status: 'enqueued' });
+        results.push({ userId, jobId, status: 'enqueued' } as any);
       } catch (error) {
         this.logger.error(`Failed to queue notification for user ${userId}: ${error.message}`);
-        results.push({ userId, error: error.message, status: 'failed' });
+        results.push({ userId, error: error.message, status: 'failed' } as any);
       }
     }
     
