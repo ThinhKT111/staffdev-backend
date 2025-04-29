@@ -23,7 +23,6 @@ import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
 
-
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -46,13 +45,54 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        store: redisStore,
-        host: configService.get('REDIS_HOST', 'localhost'),
-        port: configService.get('REDIS_PORT', 6379),
-        ttl: 60 * 60, // 1 giờ mặc định
-        max: 1000, // Số lượng items tối đa trong cache
-      }),
+      useFactory: async (configService: ConfigService) => {
+        try {
+          // Kiểm tra Redis config
+          const redisHost = configService.get('REDIS_HOST');
+          const redisPort = configService.get('REDIS_PORT');
+          
+          if (!redisHost || !redisPort) {
+            console.warn('Redis configuration missing, falling back to memory store');
+            return {
+              ttl: 60 * 60, // 1 giờ mặc định
+              max: 1000, // Số lượng items tối đa trong cache
+            };
+          }
+          
+          // Cố gắng kết nối Redis
+          const redis = require('redis');
+          const client = redis.createClient({
+            host: redisHost,
+            port: redisPort,
+          });
+          
+          // Kiểm tra kết nối Redis
+          await new Promise((resolve, reject) => {
+            client.on('connect', resolve);
+            client.on('error', reject);
+            // Timeout sau 3 giây
+            setTimeout(() => reject(new Error('Redis connection timeout')), 3000);
+          });
+          
+          // Nếu đến đây, Redis đã kết nối thành công
+          console.log('Redis connected successfully, using Redis store');
+          client.quit();
+          
+          return {
+            store: redisStore,
+            host: redisHost,
+            port: redisPort,
+            ttl: 60 * 60, // 1 giờ mặc định
+            max: 1000, // Số lượng items tối đa trong cache
+          };
+        } catch (error) {
+          console.warn(`Failed to connect to Redis: ${error.message}, falling back to memory store`);
+          return {
+            ttl: 60 * 60, // 1 giờ mặc định
+            max: 1000, // Số lượng items tối đa trong cache
+          };
+        }
+      },
       inject: [ConfigService],
     }),
     AuthModule,

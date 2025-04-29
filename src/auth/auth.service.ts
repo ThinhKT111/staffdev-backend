@@ -129,7 +129,7 @@ export class AuthService {
 
   async getUserDevices(userId: number): Promise<any[]> {
     const deviceIds = await this.cacheManager.get<string[]>(`user_devices:${userId}`) || [];
-    const devices = [];
+    const devices: any[] = []; // Explicitly type the array
     
     for (const deviceId of deviceIds) {
       const deviceInfo = await this.cacheManager.get(`user_device:${userId}:${deviceId}`);
@@ -164,7 +164,7 @@ export class AuthService {
     const token = crypto.randomBytes(32).toString('hex');
     
     // Lưu token vào Redis với thời hạn 1 giờ
-    await this.cacheManager.set(`reset_password:${token}`, user.user_id, 3600);
+    await this.cacheManager.set(`reset_password:${token}`, user.user_id.toString(), 3600);
     
     // Trong môi trường thực tế, gửi email với link reset password
     
@@ -176,11 +176,13 @@ export class AuthService {
 
   async resetPassword(token: string, newPassword: string) {
     // Tìm user_id từ token trong Redis
-    const userId = await this.cacheManager.get(`reset_password:${token}`);
+    const userIdStr = await this.cacheManager.get<string>(`reset_password:${token}`);
     
-    if (!userId) {
+    if (!userIdStr) {
       throw new NotFoundException('Token không hợp lệ hoặc đã hết hạn');
     }
+    
+    const userId = parseInt(userIdStr, 10);
     
     // Tìm user
     const user = await this.usersRepository.findOne({ where: { user_id: userId } });

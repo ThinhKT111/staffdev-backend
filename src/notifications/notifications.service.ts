@@ -12,6 +12,20 @@ import { NotificationEvents } from './dto/notification-event.dto';
 import { QueueService } from '../shared/services/queue.service';
 import { UnreadCounterService } from './services/unread-counter.service';
 
+interface NotificationJobData {
+  userId: number;
+  title: string;
+  content: string;
+  type: string;
+}
+
+interface BulkNotificationJobData {
+  userIds: number[];
+  title: string;
+  content: string;
+  type: string;
+}
+
 @Injectable()
 export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
@@ -33,7 +47,7 @@ export class NotificationsService implements OnModuleInit {
   }
 
   // Xử lý thông báo từ queue
-  private async processNotification(data: any): Promise<Notification> {
+  private async processNotification(data: NotificationJobData): Promise<Notification> {
     const { userId, title, content, type } = data;
     
     try {
@@ -70,24 +84,25 @@ export class NotificationsService implements OnModuleInit {
   }
 
   // Xử lý thông báo hàng loạt từ queue
-  private async processBulkNotification(data: any): Promise<any[]> {
+  private async processBulkNotification(data: BulkNotificationJobData): Promise<any[]> {
     const { userIds, title, content, type } = data;
-    const results = [];
+    // Explicitly type the results array 
+    const results: Array<{userId: number; jobId?: string; error?: any; status: string}> = [];
     
     for (const userId of userIds) {
       try {
         // Thêm vào hàng đợi thông báo riêng lẻ
-        const jobId = await this.queueService.enqueue('notification', {
+        const jobId = await this.queueService.enqueue<NotificationJobData>('notification', {
           userId,
           title,
           content,
           type,
         });
         
-        results.push({ userId, jobId, status: 'enqueued' } as any);
+        results.push({ userId, jobId, status: 'enqueued' });
       } catch (error) {
         this.logger.error(`Failed to queue notification for user ${userId}: ${error.message}`);
-        results.push({ userId, error: error.message, status: 'failed' } as any);
+        results.push({ userId, error: error.message, status: 'failed' });
       }
     }
     
@@ -128,7 +143,7 @@ export class NotificationsService implements OnModuleInit {
  
   // Sửa đổi phương thức create để sử dụng queue
   async create(createNotificationDto: CreateNotificationDto): Promise<any> {
-    const jobId = await this.queueService.enqueue('notification', {
+    const jobId = await this.queueService.enqueue<NotificationJobData>('notification', {
       userId: createNotificationDto.userId,
       title: createNotificationDto.title,
       content: createNotificationDto.content,
@@ -143,7 +158,7 @@ export class NotificationsService implements OnModuleInit {
  
   // Sửa đổi phương thức tạo thông báo hàng loạt
   async createBulk(bulkCreateDto: BulkCreateNotificationDto): Promise<any> {
-    const jobId = await this.queueService.enqueue('bulk_notification', {
+    const jobId = await this.queueService.enqueue<BulkNotificationJobData>('bulk_notification', {
       userIds: bulkCreateDto.userIds,
       title: bulkCreateDto.title,
       content: bulkCreateDto.content,

@@ -7,6 +7,13 @@ import { Notification, NotificationType } from '../entities/notification.entity'
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { QueueService } from '../shared/services/queue.service';
 
+interface TaskReminderJobData {
+  taskId: number;
+  userId: number;
+  title: string;
+  deadline: Date;
+}
+
 @Injectable()
 export class TaskReminderService implements OnModuleInit {
   private readonly logger = new Logger(TaskReminderService.name);
@@ -39,18 +46,18 @@ export class TaskReminderService implements OnModuleInit {
     
     this.logger.log(`Found ${upcomingTasks.length} upcoming tasks to remind users about`);
     
-    // Thêm nhiệm vụ vào hàng đợi để gửi thông báo nhắc nhở
-    const reminderJobs = [];
+    // Explicitly type the reminderJobs array
+    const reminderJobs: Array<{taskId: number; jobId: string}> = [];
     
     for (const task of upcomingTasks) {
-      const jobId = await this.queueService.enqueue('task_reminder', {
+      const jobId = await this.queueService.enqueue<TaskReminderJobData>('task_reminder', {
         taskId: task.task_id,
         userId: task.assigned_to,
         title: task.title,
         deadline: task.deadline,
       });
       
-      reminderJobs.push({ taskId: task.task_id, jobId } as any);
+      reminderJobs.push({ taskId: task.task_id, jobId });
       
       this.logger.debug(`Queued reminder for task ${task.task_id}`);
     }
@@ -62,7 +69,7 @@ export class TaskReminderService implements OnModuleInit {
   }
   
   // Xử lý nhắc nhở nhiệm vụ từ queue
-  private async processTaskReminder(data: any): Promise<any> {
+  private async processTaskReminder(data: TaskReminderJobData): Promise<any> {
     const { taskId, userId, title, deadline } = data;
     
     // Định dạng deadline

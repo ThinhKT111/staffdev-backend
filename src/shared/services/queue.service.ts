@@ -21,8 +21,44 @@ export interface Job<T = any> {
 export class QueueService {
   private readonly logger = new Logger(QueueService.name);
   private readonly workers: Map<string, NodeJS.Timeout> = new Map();
-  
-  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
+  private redisAvailable: boolean = false;
+
+  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {
+    // Kiểm tra xem Redis có khả dụng không
+    this.checkRedisAvailability();
+  }
+
+  private async checkRedisAvailability(): Promise<void> {
+    try {
+      const redisClient = this.getRedisClient();
+      if (redisClient) {
+        // Thử ping Redis để kiểm tra kết nối
+        await redisClient.ping();
+        this.redisAvailable = true;
+        this.logger.log('Redis is available');
+      } else {
+        this.redisAvailable = false;
+        this.logger.warn('Redis client is not available');
+      }
+    } catch (error) {
+      this.redisAvailable = false;
+      this.logger.error(`Redis connection failed: ${error.message}`);
+    }
+  }
+
+  // Lấy Redis client một cách an toàn
+  private getRedisClient(): any {
+    try {
+      const store = (this.cacheManager as any).store;
+      if (store && typeof store.getClient === 'function') {
+        return store.getClient();
+      }
+      return null;
+    } catch (error) {
+      this.logger.error(`Failed to get Redis client: ${error.message}`);
+      return null;
+    }
+  }
 
   // Thêm job vào hàng đợi
   async enqueue<T = any>(type: string, data: T): Promise<string> {
@@ -37,39 +73,51 @@ export class QueueService {
       updatedAt: new Date().toISOString(),
     };
     
-    // Lưu thông tin job
-    await this.cacheManager.set(`job:${jobId}`, job);
+    // Lưu thông tin job vào cache
+    await this.cacheManager.set(`job:${jobId}`, job, 86400); // 1 day TTL
     
-    // Thêm job vào hàng đợi
-    const redisClient = (this.cacheManager as any).store.getClient();
-    await redisClient.lpush(`queue:${type}`, jobId);
-    
-    this.logger.debug(`Added job ${jobId} to queue ${type}`);
+    // Thêm job vào hàng đợi nếu Redis khả dụng
+    if (this.redisAvailable) {
+      const redisClient = this.getRedisClient();
+      if (redisClient) {
+        try {
+          await redisClient.lpush(`queue:${type}`, jobId);
+          this.logger.debug(`Added job ${jobId} to queue ${type}`);
+        } catch (error) {
+          this.logger.error(`Failed to add job to Redis queue: ${error.message}`);
+          // Xử lý job ngay lập tức nếu không thể thêm vào queue
+          setTimeout(() => this.processJob(type, jobId), 0);
+        }
+      } else {
+        // Xử lý job ngay lập tức nếu không có Redis client
+        setTimeout(() => this.processJob(type, jobId), 0);
+      }
+    } else {
+      // Xử lý job ngay lập tức nếu Redis không khả dụng
+      setTimeout(() => this.processJob(type, jobId), 0);
+    }
     
     return jobId;
   }
 
   // Lấy thông tin của job
-  async getJob(jobId: string): Promise<Job | null> {
-    return this.cacheManager.get<Job>(`job:${jobId}`);
+  async getJob<T = any>(jobId: string): Promise<Job<T> | null> {
+    return this.cacheManager.get<Job<T>>(`job:${jobId}`);
   }
 
-  // Xử lý job trong hàng đợi
-  async processQueue(type: string, processor: (data: any) => Promise<any>): Promise<boolean> {
-    const redisClient = (this.cacheManager as any).store.getClient();
-    const queueKey = `queue:${type}`;
-    
-    // Lấy job từ cuối hàng đợi
-    const jobId = await redisClient.rpop(queueKey);
-    
-    if (!jobId) {
-      return false;
-    }
-    
-    const job = await this.cacheManager.get<Job>(`job:${jobId}`);
+  // Xử lý một job cụ thể
+  private async processJob<T = any>(type: string, jobId: string): Promise<boolean> {
+    const job = await this.getJob<T>(jobId);
     
     if (!job) {
       this.logger.warn(`Job ${jobId} not found`);
+      return false;
+    }
+    
+    // Lấy worker function đã đăng ký
+    const workerFunction = this.workerFunctions.get(type);
+    if (!workerFunction) {
+      this.logger.warn(`No worker registered for queue ${type}`);
       return false;
     }
     
@@ -77,17 +125,17 @@ export class QueueService {
       // Cập nhật trạng thái
       job.status = 'processing';
       job.updatedAt = new Date().toISOString();
-      await this.cacheManager.set(`job:${jobId}`, job);
+      await this.cacheManager.set(`job:${jobId}`, job, 86400);
       
       // Thực thi processor
-      const result = await processor(job.data);
+      const result = await workerFunction(job.data);
       
       // Cập nhật kết quả
       job.status = 'completed';
       job.result = result;
       job.updatedAt = new Date().toISOString();
       
-      await this.cacheManager.set(`job:${jobId}`, job, 86400); // Lưu 1 ngày
+      await this.cacheManager.set(`job:${jobId}`, job, 86400);
       
       this.logger.debug(`Job ${jobId} completed successfully`);
       return true;
@@ -104,14 +152,55 @@ export class QueueService {
     }
   }
 
+  // Map để lưu trữ các worker function
+  private workerFunctions = new Map<string, (data: any) => Promise<any>>();
+
+  // Xử lý job trong hàng đợi
+  async processQueue<T = any, R = any>(
+    type: string, 
+    processor: (data: T) => Promise<R>
+  ): Promise<boolean> {
+    if (!this.redisAvailable) {
+      return false;
+    }
+    
+    const redisClient = this.getRedisClient();
+    if (!redisClient) {
+      return false;
+    }
+    
+    const queueKey = `queue:${type}`;
+    
+    try {
+      // Lấy job từ cuối hàng đợi
+      const jobId = await redisClient.rpop(queueKey);
+      
+      if (!jobId) {
+        return false;
+      }
+      
+      return await this.processJob(type, jobId);
+    } catch (error) {
+      this.logger.error(`Error processing queue ${type}: ${error.message}`);
+      return false;
+    }
+  }
+
   // Khởi động worker để xử lý jobs liên tục
-  startWorker(type: string, processor: (data: any) => Promise<any>, interval: number = 1000): void {
+  startWorker<T = any, R = any>(
+    type: string, 
+    processor: (data: T) => Promise<R>, 
+    interval: number = 1000
+  ): void {
     if (this.workers.has(type)) {
       this.logger.warn(`Worker for queue ${type} is already running`);
       return;
     }
     
     this.logger.log(`Starting worker for queue ${type}`);
+    
+    // Lưu worker function vào map
+    this.workerFunctions.set(type, processor);
     
     const processNext = async () => {
       try {

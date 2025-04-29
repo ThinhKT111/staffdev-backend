@@ -23,11 +23,35 @@ export class ForumService implements OnModuleInit {
   
   async onModuleInit() {
     // Khởi tạo comment counters khi service được khởi tạo
-    await this.initializeCommentCounters();
+    try {
+      await this.initializeCommentCounters();
+    } catch (error) {
+      console.error('Failed to initialize comment counters:', error);
+    }
   }
   
   private async initializeCommentCounters(): Promise<void> {
     try {
+      // Kiểm tra bảng forum_posts có tồn tại không
+      const checkTableExists = async () => {
+        try {
+          // Thử đếm số lượng bản ghi để kiểm tra bảng có tồn tại không
+          await this.postsRepository.count();
+          return true;
+        } catch (error) {
+          if (error.message.includes('relation "forum_posts" does not exist')) {
+            return false;
+          }
+          throw error; // Re-throw nếu là lỗi khác
+        }
+      };
+
+      const tableExists = await checkTableExists();
+      if (!tableExists) {
+        console.warn('The forum_posts table does not exist yet. Skipping counter initialization.');
+        return;
+      }
+
       // Lấy tất cả post IDs
       const posts = await this.postsRepository.find({ select: ['post_id'] });
       const postIds = posts.map(post => post.post_id);
