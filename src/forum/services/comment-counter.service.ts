@@ -157,6 +157,8 @@ export class CommentCounterService {
   // Khởi tạo counters cho tất cả bài viết
   async initializeCounters(postIds: number[]): Promise<void> {
     // Sync với DB - đếm comment cho mỗi post
+    const results = [];
+    
     for (const postId of postIds) {
       try {
         // Đếm số lượng comment thực tế
@@ -166,9 +168,13 @@ export class CommentCounterService {
         
         // Cập nhật counter
         await this.setCount(postId, commentCount);
+        results.push({ postId, commentCount, success: true });
       } catch (error) {
         this.logger.error(`Failed to initialize counter for post ${postId}: ${error.message}`);
+        results.push({ postId, success: false, error: error.message });
       }
     }
+    
+    this.logger.debug(`Initialized ${results.filter(r => r.success).length}/${postIds.length} comment counters`);
   }
 }

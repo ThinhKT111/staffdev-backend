@@ -22,11 +22,13 @@ import { ProfilesModule } from './profiles/profiles.module';
 import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
+import { DatabaseService } from './database/database.service';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: '.env',
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -39,7 +41,8 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
         password: configService.get('DB_PASSWORD') || 'password',
         database: configService.get('DB_NAME') || 'staffdev',
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false,
+        synchronize: configService.get('NODE_ENV') === 'development',
+        logging: configService.get('NODE_ENV') === 'development',
       }),
     }),
     CacheModule.registerAsync({
@@ -59,34 +62,54 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
             };
           }
           
-          // Cố gắng kết nối Redis
-          const redis = require('redis');
-          const client = redis.createClient({
-            host: redisHost,
-            port: redisPort,
-          });
-          
-          // Kiểm tra kết nối Redis
-          await new Promise((resolve, reject) => {
-            client.on('connect', resolve);
-            client.on('error', reject);
-            // Timeout sau 3 giây
-            setTimeout(() => reject(new Error('Redis connection timeout')), 3000);
-          });
-          
-          // Nếu đến đây, Redis đã kết nối thành công
-          console.log('Redis connected successfully, using Redis store');
-          client.quit();
-          
-          return {
-            store: redisStore,
-            host: redisHost,
-            port: redisPort,
-            ttl: 60 * 60, // 1 giờ mặc định
-            max: 1000, // Số lượng items tối đa trong cache
-          };
+          // Thử kết nối Redis
+          try {
+            const Redis = require('redis');
+            const client = Redis.createClient({
+              host: redisHost,
+              port: redisPort,
+            });
+            
+            return new Promise((resolve, reject) => {
+              client.on('connect', () => {
+                client.quit();
+                console.log('Redis connected successfully, using Redis store');
+                resolve({
+                  store: redisStore,
+                  host: redisHost,
+                  port: redisPort,
+                  ttl: 60 * 60, // 1 giờ mặc định
+                  max: 1000, // Số lượng items tối đa trong cache
+                });
+              });
+              
+              client.on('error', (err) => {
+                console.warn(`Failed to connect to Redis: ${err.message}, falling back to memory store`);
+                resolve({
+                  ttl: 60 * 60, // 1 giờ mặc định
+                  max: 1000, // Số lượng items tối đa trong cache
+                });
+              });
+              
+              // Timeout sau 3 giây
+              setTimeout(() => {
+                client.quit();
+                console.warn('Redis connection timeout, falling back to memory store');
+                resolve({
+                  ttl: 60 * 60, // 1 giờ mặc định
+                  max: 1000, // Số lượng items tối đa trong cache
+                });
+              }, 3000);
+            });
+          } catch (error) {
+            console.warn(`Error initializing Redis: ${error.message}, falling back to memory store`);
+            return {
+              ttl: 60 * 60, // 1 giờ mặc định
+              max: 1000, // Số lượng items tối đa trong cache
+            };
+          }
         } catch (error) {
-          console.warn(`Failed to connect to Redis: ${error.message}, falling back to memory store`);
+          console.warn(`Generic error in cache config: ${error.message}, falling back to memory store`);
           return {
             ttl: 60 * 60, // 1 giờ mặc định
             max: 1000, // Số lượng items tối đa trong cache
@@ -111,7 +134,7 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
     ProfilesModule,
   ],
   controllers: [AppController, DatabaseController],
-  providers: [AppService],
+  providers: [AppService, DatabaseService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
