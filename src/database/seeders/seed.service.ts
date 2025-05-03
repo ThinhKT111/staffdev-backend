@@ -57,18 +57,18 @@ export class SeedService {
         { department_name: 'Sales' }
       ];
       
-      const createdDepartments = [];
+      const createdDepartments: Department[] = [];
       for (const dept of departments) {
         const exists = await this.departmentsRepository.findOne({
           where: { department_name: dept.department_name }
         });
         
         if (!exists) {
-          const createdDept = await this.departmentsRepository.save(dept);
-          createdDepartments.push(createdDept);
+          const createdDept = await this.departmentsRepository.save(dept as any);
+          createdDepartments.push(createdDept as Department);
           console.log(`Created department: ${dept.department_name}`);
         } else {
-          createdDepartments.push(exists);
+          createdDepartments.push(exists as Department);
         }
       }
       
@@ -98,7 +98,7 @@ export class SeedService {
         // Update department manager to admin
         if (createdDepartments[0]) {
           createdDepartments[0].manager_id = savedAdmin.user_id;
-          await this.departmentsRepository.save(createdDepartments[0]);
+          await this.departmentsRepository.save(createdDepartments[0] as any);
         }
         
         // Create sample users
@@ -133,7 +133,7 @@ export class SeedService {
             const deptIndex = userData.department_id - 1;
             if (createdDepartments[deptIndex]) {
               createdDepartments[deptIndex].manager_id = savedUser.user_id;
-              await this.departmentsRepository.save(createdDepartments[deptIndex]);
+              await this.departmentsRepository.save(createdDepartments[deptIndex] as any);
             }
           }
         }

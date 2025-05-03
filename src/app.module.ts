@@ -41,7 +41,7 @@ import { DatabaseService } from './database/database.service';
         password: configService.get('DB_PASSWORD') || 'password',
         database: configService.get('DB_NAME') || 'staffdev',
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: configService.get('NODE_ENV') === 'development',
+        synchronize: false, // Đảm bảo tắt đồng bộ hóa
         logging: configService.get('NODE_ENV') === 'development',
       }),
     }),
@@ -68,6 +68,9 @@ import { DatabaseService } from './database/database.service';
             const client = Redis.createClient({
               host: redisHost,
               port: redisPort,
+              socket: {
+                connectTimeout: 1000, // Giảm timeout xuống 1 giây
+              }
             });
             
             return new Promise((resolve, reject) => {
@@ -91,15 +94,19 @@ import { DatabaseService } from './database/database.service';
                 });
               });
               
-              // Timeout sau 3 giây
+              // Timeout sau 1 giây
               setTimeout(() => {
-                client.quit();
+                try {
+                  client.quit().catch(() => {}); // Bắt lỗi nếu client đã đóng
+                } catch (e) {
+                  // Bỏ qua lỗi nếu client đã đóng
+                }
                 console.warn('Redis connection timeout, falling back to memory store');
                 resolve({
                   ttl: 60 * 60, // 1 giờ mặc định
                   max: 1000, // Số lượng items tối đa trong cache
                 });
-              }, 3000);
+              }, 1000);
             });
           } catch (error) {
             console.warn(`Error initializing Redis: ${error.message}, falling back to memory store`);

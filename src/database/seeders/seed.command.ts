@@ -26,7 +26,7 @@ export class SeedCommand extends CommandRunner {
     flags: '-f, --force [force]',
     description: 'Force reseed (clear existing data)',
   })
-  parseForce(val: string): boolean {
-    return val === 'true' || val === '' || val === true;
+  parseForce(val: string | boolean): boolean {
+    return val === 'true' || val === true || val === '';
   }
 }

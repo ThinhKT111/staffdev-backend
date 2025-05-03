@@ -3,7 +3,7 @@ import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { User } from './user.entity';
 import { TrainingPath } from './training-path.entity';
 
-@Entity('departments')
+@Entity('Departments')
 export class Department {
   @PrimaryGeneratedColumn('increment')
   department_id: number;

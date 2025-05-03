@@ -6,6 +6,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ForumComment } from '../../entities/forum-comment.entity';
 
+interface ResultItem {
+  postId: number;
+  commentCount?: number;
+  success: boolean;
+  error?: any;
+}
+
 @Injectable()
 export class CommentCounterService {
   private readonly logger = new Logger(CommentCounterService.name);
@@ -157,7 +164,7 @@ export class CommentCounterService {
   // Khởi tạo counters cho tất cả bài viết
   async initializeCounters(postIds: number[]): Promise<void> {
     // Sync với DB - đếm comment cho mỗi post
-    const results = [];
+    const results: ResultItem[] = [];
     
     for (const postId of postIds) {
       try {

@@ -15,7 +15,7 @@ export enum UserRole {
   SENIOR_MANAGER = 'SeniorManager',
 }
 
-@Entity('users')
+@Entity('Users')
 export class User {
   @PrimaryGeneratedColumn('increment')
   user_id: number;
