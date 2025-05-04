@@ -7,6 +7,7 @@ import { Cache } from 'cache-manager';
 export class UnreadCounterService {
   private readonly logger = new Logger(UnreadCounterService.name);
   private redisAvailable: boolean = false;
+  private redisClient: any = null;
   private memoryCounters: Map<number, number> = new Map(); // Fallback khi Redis không khả dụng
 
   constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {
@@ -16,18 +17,20 @@ export class UnreadCounterService {
 
   private async checkRedisAvailability(): Promise<void> {
     try {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
+      this.redisClient = this.getRedisClient();
+      if (this.redisClient) {
         // Thử ping Redis để kiểm tra kết nối
-        await redisClient.ping();
+        await this.redisClient.ping();
         this.redisAvailable = true;
         this.logger.log('Redis is available for unread counters');
       } else {
         this.redisAvailable = false;
+        this.redisClient = null;
         this.logger.warn('Redis client is not available for unread counters, using memory store instead');
       }
     } catch (error) {
       this.redisAvailable = false;
+      this.redisClient = null;
       this.logger.error(`Redis connection failed for unread counters: ${error.message}`);
     }
   }
@@ -48,14 +51,11 @@ export class UnreadCounterService {
 
   // Tăng số lượng thông báo chưa đọc
   async increment(userId: number): Promise<number> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          return await redisClient.incr(`unread:${userId}`);
-        } catch (error) {
-          this.logger.error(`Redis increment error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        return await this.redisClient.incr(`unread:${userId}`);
+      } catch (error) {
+        this.logger.error(`Redis increment error: ${error.message}`);
       }
     }
     
@@ -68,22 +68,19 @@ export class UnreadCounterService {
 
   // Giảm số lượng thông báo chưa đọc
   async decrement(userId: number): Promise<number> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          const count = await redisClient.decr(`unread:${userId}`);
-          
-          // Đảm bảo không âm
-          if (count < 0) {
-            await redisClient.set(`unread:${userId}`, 0);
-            return 0;
-          }
-          
-          return count;
-        } catch (error) {
-          this.logger.error(`Redis decrement error: ${error.message}`);
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        const count = await this.redisClient.decr(`unread:${userId}`);
+        
+        // Đảm bảo không âm
+        if (count < 0) {
+          await this.redisClient.set(`unread:${userId}`, 0);
+          return 0;
         }
+        
+        return count;
+      } catch (error) {
+        this.logger.error(`Redis decrement error: ${error.message}`);
       }
     }
     
@@ -96,15 +93,12 @@ export class UnreadCounterService {
 
   // Lấy số lượng thông báo chưa đọc
   async getCount(userId: number): Promise<number> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          const count = await redisClient.get(`unread:${userId}`);
-          return count ? parseInt(count, 10) : 0;
-        } catch (error) {
-          this.logger.error(`Redis get count error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        const count = await this.redisClient.get(`unread:${userId}`);
+        return count ? parseInt(count, 10) : 0;
+      } catch (error) {
+        this.logger.error(`Redis get count error: ${error.message}`);
       }
     }
     
@@ -114,15 +108,12 @@ export class UnreadCounterService {
 
   // Đặt lại counter về 0
   async reset(userId: number): Promise<void> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          await redisClient.set(`unread:${userId}`, 0);
-          return;
-        } catch (error) {
-          this.logger.error(`Redis reset error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        await this.redisClient.set(`unread:${userId}`, 0);
+        return;
+      } catch (error) {
+        this.logger.error(`Redis reset error: ${error.message}`);
       }
     }
     
@@ -132,15 +123,12 @@ export class UnreadCounterService {
 
   // Đồng bộ counter với số thực tế trong database
   async sync(userId: number, count: number): Promise<void> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          await redisClient.set(`unread:${userId}`, count);
-          return;
-        } catch (error) {
-          this.logger.error(`Redis sync error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        await this.redisClient.set(`unread:${userId}`, count);
+        return;
+      } catch (error) {
+        this.logger.error(`Redis sync error: ${error.message}`);
       }
     }
     

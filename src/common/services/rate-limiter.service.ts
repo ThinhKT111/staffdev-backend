@@ -7,6 +7,7 @@ import { Cache } from 'cache-manager';
 export class RateLimiterService {
   private readonly logger = new Logger(RateLimiterService.name);
   private redisAvailable: boolean = false;
+  private redisClient: any = null;
   private memoryRateLimits: Map<string, number[]> = new Map(); // Fallback khi Redis không khả dụng
 
   constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {
@@ -16,10 +17,10 @@ export class RateLimiterService {
 
   private async checkRedisAvailability(): Promise<void> {
     try {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
+      this.redisClient = this.getRedisClient();
+      if (this.redisClient) {
         // Thử ping Redis để kiểm tra kết nối
-        await redisClient.ping();
+        await this.redisClient.ping();
         this.redisAvailable = true;
         this.logger.log('Redis is available for rate limiting');
       } else {
@@ -28,6 +29,7 @@ export class RateLimiterService {
       }
     } catch (error) {
       this.redisAvailable = false;
+      this.redisClient = null;
       this.logger.error(`Redis connection failed for rate limiting: ${error.message}`);
     }
   }
@@ -47,36 +49,32 @@ export class RateLimiterService {
   }
 
   async isRateLimited(key: string, limit: number, windowSeconds: number): Promise<boolean> {
-    if (this.redisAvailable) {
+    if (this.redisAvailable && this.redisClient) {
       try {
-        // Lấy Redis client từ cache manager
-        const redisClient = this.getRedisClient();
-        if (redisClient) {
-          const now = Date.now();
-          
-          // Sử dụng Redis Sorted Set để lưu timestamps
-          const keyName = `ratelimit:${key}`;
-          
-          // Xóa timestamp cũ
-          const windowStart = now - (windowSeconds * 1000);
-          await redisClient.zremrangebyscore(keyName, 0, windowStart);
-          
-          // Đếm requests hiện tại trong window
-          const count = await redisClient.zcard(keyName);
-          
-          // Nếu đã vượt quá giới hạn
-          if (count >= limit) {
-            return true;
-          }
-          
-          // Thêm timestamp hiện tại
-          await redisClient.zadd(keyName, now, `${now}-${Math.random()}`);
-          
-          // Set expiration để tự động xóa
-          await redisClient.expire(keyName, windowSeconds);
-          
-          return false;
+        const now = Date.now();
+        
+        // Sử dụng Redis Sorted Set để lưu timestamps
+        const keyName = `ratelimit:${key}`;
+        
+        // Xóa timestamp cũ
+        const windowStart = now - (windowSeconds * 1000);
+        await this.redisClient.zremrangebyscore(keyName, 0, windowStart);
+        
+        // Đếm requests hiện tại trong window
+        const count = await this.redisClient.zcard(keyName);
+        
+        // Nếu đã vượt quá giới hạn
+        if (count >= limit) {
+          return true;
         }
+        
+        // Thêm timestamp hiện tại
+        await this.redisClient.zadd(keyName, now, `${now}-${Math.random()}`);
+        
+        // Set expiration để tự động xóa
+        await this.redisClient.expire(keyName, windowSeconds);
+        
+        return false;
       } catch (error) {
         this.logger.error(`Redis rate limiting error: ${error.message}`);
         // Fallback to memory rate limiting

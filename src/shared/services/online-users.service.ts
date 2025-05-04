@@ -7,6 +7,7 @@ import { Cache } from 'cache-manager';
 export class OnlineUsersService {
   private readonly logger = new Logger(OnlineUsersService.name);
   private redisAvailable: boolean = false;
+  private redisClient: any = null;
   private memoryOnlineUsers: Set<number> = new Set(); // Fallback khi Redis không khả dụng
 
   constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {
@@ -16,18 +17,20 @@ export class OnlineUsersService {
 
   private async checkRedisAvailability(): Promise<void> {
     try {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
+      this.redisClient = this.getRedisClient();
+      if (this.redisClient) {
         // Thử ping Redis để kiểm tra kết nối
-        await redisClient.ping();
+        await this.redisClient.ping();
         this.redisAvailable = true;
         this.logger.log('Redis is available for online users tracking');
       } else {
         this.redisAvailable = false;
+        this.redisClient = null;
         this.logger.warn('Redis client is not available for online users tracking, using memory store instead');
       }
     } catch (error) {
       this.redisAvailable = false;
+      this.redisClient = null;
       this.logger.error(`Redis connection failed for online users tracking: ${error.message}`);
     }
   }
@@ -48,15 +51,12 @@ export class OnlineUsersService {
 
   // Đánh dấu user online
   async addOnlineUser(userId: number): Promise<number> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          await redisClient.sadd('online_users', userId.toString());
-          return await redisClient.scard('online_users');
-        } catch (error) {
-          this.logger.error(`Redis add online user error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        await this.redisClient.sadd('online_users', userId.toString());
+        return await this.redisClient.scard('online_users');
+      } catch (error) {
+        this.logger.error(`Redis add online user error: ${error.message}`);
       }
     }
     
@@ -67,15 +67,12 @@ export class OnlineUsersService {
 
   // Đánh dấu user offline
   async removeOnlineUser(userId: number): Promise<number> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          await redisClient.srem('online_users', userId.toString());
-          return await redisClient.scard('online_users');
-        } catch (error) {
-          this.logger.error(`Redis remove online user error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        await this.redisClient.srem('online_users', userId.toString());
+        return await this.redisClient.scard('online_users');
+      } catch (error) {
+        this.logger.error(`Redis remove online user error: ${error.message}`);
       }
     }
     
@@ -86,14 +83,11 @@ export class OnlineUsersService {
 
   // Đếm số người dùng online
   async countOnlineUsers(): Promise<number> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          return await redisClient.scard('online_users');
-        } catch (error) {
-          this.logger.error(`Redis count online users error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        return await this.redisClient.scard('online_users');
+      } catch (error) {
+        this.logger.error(`Redis count online users error: ${error.message}`);
       }
     }
     
@@ -103,15 +97,12 @@ export class OnlineUsersService {
 
   // Lấy danh sách người dùng đang online
   async getOnlineUsers(): Promise<number[]> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          const members = await redisClient.smembers('online_users');
-          return members.map(userId => parseInt(userId, 10));
-        } catch (error) {
-          this.logger.error(`Redis get online users error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        const members = await this.redisClient.smembers('online_users');
+        return members.map(userId => parseInt(userId, 10));
+      } catch (error) {
+        this.logger.error(`Redis get online users error: ${error.message}`);
       }
     }
     
@@ -121,14 +112,11 @@ export class OnlineUsersService {
 
   // Kiểm tra một người dùng có online không
   async isUserOnline(userId: number): Promise<boolean> {
-    if (this.redisAvailable) {
-      const redisClient = this.getRedisClient();
-      if (redisClient) {
-        try {
-          return !!(await redisClient.sismember('online_users', userId.toString()));
-        } catch (error) {
-          this.logger.error(`Redis check user online error: ${error.message}`);
-        }
+    if (this.redisAvailable && this.redisClient) {
+      try {
+        return !!(await this.redisClient.sismember('online_users', userId.toString()));
+      } catch (error) {
+        this.logger.error(`Redis check user online error: ${error.message}`);
       }
     }
     
