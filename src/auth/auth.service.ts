@@ -6,7 +6,7 @@ import { Repository } from 'typeorm';
 import { User, UserRole } from '../entities/user.entity';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { CreateUserDto } from './dto/create-user.dto';
+import { AuthCreateUserDto } from './dto/create-user.dto';
 import { Document } from '../entities/document.entity';
 import { Profile } from '../entities/profile.entity';
 import { ProfilesService } from '../profiles/profiles.service';
@@ -209,7 +209,7 @@ export class AuthService {
     return { message: 'Mật khẩu đã được cập nhật thành công' };
   }
 
-  async register(createUserDto: CreateUserDto) {
+  async register(createUserDto: AuthCreateUserDto) {
     // Kiểm tra xem đã tồn tại user có cccd, email hoặc phone này chưa
     const existingUser = await this.usersRepository.findOne({
       where: [

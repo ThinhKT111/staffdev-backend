@@ -8,7 +8,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginWithDeviceDto } from './dto/login-with-device.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { CreateUserDto } from './dto/create-user.dto';
+import { AuthCreateUserDto } from './dto/create-user.dto';
 
 import { RateLimit } from '../common/decorators/rate-limit.decorator';
 import { RateLimitGuard } from '../common/guards/rate-limit.guard';
@@ -41,10 +41,10 @@ export class AuthController {
     );
   }
 
+  @Post('register')
   @UseGuards(RateLimitGuard)
   @RateLimit(5, 300) // 5 requests/5 minutes
-  @Post('register')
-  async register(@Body() createUserDto: CreateUserDto) {
+  async register(@Body() createUserDto: AuthCreateUserDto) {
     return this.authService.register(createUserDto);
   }
 

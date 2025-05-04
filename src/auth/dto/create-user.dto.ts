@@ -1,9 +1,9 @@
-// src/users/dto/create-user.dto.ts
+// src/auth/dto/create-user.dto.ts
 import { IsEmail, IsNotEmpty, IsString, MinLength, IsEnum, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '../../entities/user.entity';
 
-export class CreateUserDto {
+export class AuthCreateUserDto {
   @ApiProperty({ example: '034095000123', description: 'CCCD/CMND của người dùng' })
   @IsNotEmpty()
   @IsString()
