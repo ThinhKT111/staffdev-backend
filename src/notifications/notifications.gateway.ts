@@ -26,7 +26,11 @@ import { WebSocketMessageDto } from './dto/websocket-message.dto';
     methods: ['GET', 'POST'],
     credentials: true,
   },
-  namespace: 'notifications'
+  namespace: 'notifications',
+  path: '/notifications/socket.io',
+  transports: ['websocket', 'polling'],
+  pingInterval: 25000,
+  pingTimeout: 20000,
 })
 export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer() server: Server;
