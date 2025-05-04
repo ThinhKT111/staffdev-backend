@@ -41,7 +41,8 @@ export class ForumService implements OnModuleInit {
           await this.postsRepository.count();
           return true;
         } catch (error) {
-          if (error.message && error.message.includes('relation "forum_posts" does not exist')) {
+          if (error.message && (error.message.includes('relation "forum_posts" does not exist') || 
+              error.message.includes('relation "ForumPosts" does not exist'))) {
             this.logger.warn('The forum_posts table does not exist yet. Skipping counter initialization.');
             return false;
           }
@@ -71,131 +72,186 @@ export class ForumService implements OnModuleInit {
   }
 
   async findAllPosts(): Promise<ForumPost[]> {
-    const posts = await this.postsRepository.find({
-      relations: ['user'],
-      order: { created_at: 'DESC' },
-    });
-    
-    // Thêm comment counts từ Redis
-    for (const post of posts) {
-      post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
+    try {
+      const posts = await this.postsRepository.find({
+        relations: ['user'],
+        order: { created_at: 'DESC' },
+      });
+      
+      // Thêm comment counts từ Redis
+      for (const post of posts) {
+        post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
+      }
+      
+      return posts;
+    } catch (error) {
+      this.logger.error(`Error fetching posts: ${error.message}`);
+      return [];
     }
-    
-    return posts;
   }
 
   async findPost(id: number): Promise<ForumPost> {
-    const post = await this.postsRepository.findOne({
-      where: { post_id: id },
-      relations: ['user'],
-    });
-    
-    if (!post) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+    try {
+      const post = await this.postsRepository.findOne({
+        where: { post_id: id },
+        relations: ['user'],
+      });
+      
+      if (!post) {
+        throw new NotFoundException(`Post with ID ${id} not found`);
+      }
+      
+      // Thêm comment count từ Redis
+      post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
+      
+      return post;
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Error fetching post ${id}: ${error.message}`);
+      throw new NotFoundException(`Error fetching post ${id}`);
     }
-    
-    // Thêm comment count từ Redis
-    post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
-    
-    return post;
   }
 
   async createPost(createPostDto: CreatePostDto): Promise<ForumPost> {
-    const post = this.postsRepository.create({
-      title: createPostDto.title,
-      content: createPostDto.content,
-      user_id: createPostDto.userId,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    
-    const savedPost = await this.postsRepository.save(post);
-    
-    // Khởi tạo comment counter cho bài viết mới
-    await this.commentCounterService.setCount(savedPost.post_id, 0);
-    
-    // Thêm commentCount vào kết quả
-    savedPost['commentCount'] = 0;
-    
-    return savedPost;
+    try {
+      const post = this.postsRepository.create({
+        title: createPostDto.title,
+        content: createPostDto.content,
+        user_id: createPostDto.userId,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      
+      const savedPost = await this.postsRepository.save(post);
+      
+      // Khởi tạo comment counter cho bài viết mới
+      await this.commentCounterService.setCount(savedPost.post_id, 0);
+      
+      // Thêm commentCount vào kết quả
+      savedPost['commentCount'] = 0;
+      
+      return savedPost;
+    } catch (error) {
+      this.logger.error(`Error creating post: ${error.message}`);
+      throw error;
+    }
   }
 
   async updatePost(id: number, updatePostDto: UpdatePostDto): Promise<ForumPost> {
-    const post = await this.findPost(id);
-    
-    // Update post
-    const updatedPost = {
-      ...post,
-      title: updatePostDto.title || post.title,
-      content: updatePostDto.content || post.content,
-      updated_at: new Date(),
-    };
-    
-    const savedPost = await this.postsRepository.save(updatedPost);
-    
-    // Thêm commentCount vào kết quả
-    savedPost['commentCount'] = await this.commentCounterService.getCount(id);
-    
-    return savedPost;
+    try {
+      const post = await this.findPost(id);
+      
+      // Update post
+      const updatedPost = {
+        ...post,
+        title: updatePostDto.title || post.title,
+        content: updatePostDto.content || post.content,
+        updated_at: new Date(),
+      };
+      
+      const savedPost = await this.postsRepository.save(updatedPost);
+      
+      // Thêm commentCount vào kết quả
+      savedPost['commentCount'] = await this.commentCounterService.getCount(id);
+      
+      return savedPost;
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Error updating post ${id}: ${error.message}`);
+      throw error;
+    }
   }
 
   async deletePost(id: number): Promise<void> {
-    const post = await this.findPost(id);
-    
-    // Delete all comments for this post
-    await this.commentsRepository.delete({ post_id: id });
-    
-    // Delete post
-    await this.postsRepository.remove(post);
-    
-    // Xóa comment counter
-    await this.commentCounterService.removeCount(id);
+    try {
+      const post = await this.findPost(id);
+      
+      // Delete all comments for this post
+      await this.commentsRepository.delete({ post_id: id });
+      
+      // Delete post
+      await this.postsRepository.remove(post);
+      
+      // Xóa comment counter
+      await this.commentCounterService.removeCount(id);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Error deleting post ${id}: ${error.message}`);
+      throw error;
+    }
   }
 
   async findCommentsByPost(postId: number): Promise<ForumComment[]> {
-    return this.commentsRepository.find({
-      where: { post_id: postId },
-      relations: ['user'],
-      order: { created_at: 'ASC' },
-    });
+    try {
+      return this.commentsRepository.find({
+        where: { post_id: postId },
+        relations: ['user'],
+        order: { created_at: 'ASC' },
+      });
+    } catch (error) {
+      this.logger.error(`Error fetching comments for post ${postId}: ${error.message}`);
+      return [];
+    }
   }
 
   async createComment(createCommentDto: CreateCommentDto): Promise<ForumComment> {
-    // Check if post exists
-    await this.findPost(createCommentDto.postId);
-    
-    const comment = this.commentsRepository.create({
-      content: createCommentDto.content,
-      post_id: createCommentDto.postId,
-      user_id: createCommentDto.userId,
-      created_at: new Date(),
-    });
-    
-    const savedComment = await this.commentsRepository.save(comment);
-    
-    // Tăng counter
-    const commentCount = await this.commentCounterService.increment(createCommentDto.postId);
-    
-    // Thêm commentCount vào kết quả
-    savedComment['totalComments'] = commentCount;
-    
-    return savedComment;
+    try {
+      // Check if post exists
+      await this.findPost(createCommentDto.postId);
+      
+      const comment = this.commentsRepository.create({
+        content: createCommentDto.content,
+        post_id: createCommentDto.postId,
+        user_id: createCommentDto.userId,
+        created_at: new Date(),
+      });
+      
+      const savedComment = await this.commentsRepository.save(comment);
+      
+      // Tăng counter
+      const commentCount = await this.commentCounterService.increment(createCommentDto.postId);
+      
+      // Thêm commentCount vào kết quả
+      savedComment['totalComments'] = commentCount;
+      
+      return savedComment;
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Error creating comment: ${error.message}`);
+      throw error;
+    }
   }
 
   async deleteComment(id: number): Promise<void> {
-    const comment = await this.commentsRepository.findOne({
-      where: { comment_id: id },
-    });
-    
-    if (!comment) {
-      throw new NotFoundException(`Comment with ID ${id} not found`);
+    try {
+      const comment = await this.commentsRepository.findOne({
+        where: { comment_id: id },
+      });
+      
+      if (!comment) {
+        throw new NotFoundException(`Comment with ID ${id} not found`);
+      }
+      
+      const postId = comment.post_id;
+      
+      await this.commentsRepository.remove(comment);
+      
+      // Giảm counter
+      await this.commentCounterService.decrement(postId);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      this.logger.error(`Error deleting comment ${id}: ${error.message}`);
+      throw error;
     }
-    
-    const postId = comment.post_id;
-    
-    await this.commentsRepository.remove(comment);
-    
-    // Giảm counter
-    await this.commentCounterService.decrement(postId);
   }
 }

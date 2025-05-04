@@ -9,7 +9,7 @@ export enum DurationType {
   LONG_TERM = 'LongTerm',
 }
 
-@Entity('TrainingPaths')
+@Entity('training_paths')
 export class TrainingPath {
   @PrimaryGeneratedColumn('increment')
   training_path_id: number;

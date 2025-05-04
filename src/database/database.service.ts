@@ -23,6 +23,17 @@ export class DatabaseService implements OnModuleInit {
       if (!tableExists) {
         this.logger.warn('Some database tables might be missing. You may need to run migrations or SQL scripts.');
         this.logger.warn('To create all tables, run the create_database.sql script in your database.');
+        
+        // Hướng dẫn người dùng
+        console.log('\n---------------------------------------------');
+        console.log('DATABASE SETUP REQUIRED');
+        console.log('---------------------------------------------');
+        console.log('It seems that your database tables are not set up correctly.');
+        console.log('Please run the create_database.sql script to create all required tables:');
+        console.log('\nFor PostgreSQL command line:');
+        console.log('psql -U postgres -d staffdev -f create_database.sql');
+        console.log('\nOr import the SQL file using pgAdmin.');
+        console.log('---------------------------------------------\n');
       } else {
         this.logger.log('Database tables validated successfully.');
       }

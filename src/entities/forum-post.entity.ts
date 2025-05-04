@@ -3,7 +3,7 @@ import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany, JoinColum
 import { User } from './user.entity';
 import { ForumComment } from './forum-comment.entity';
 
-@Entity('ForumPosts')
+@Entity('forum_posts')
 export class ForumPost {
   @PrimaryGeneratedColumn('increment')
   post_id: number;
