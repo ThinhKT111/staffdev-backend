@@ -23,8 +23,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
 import { DatabaseService } from './database/database.service';
-import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
-import { ScheduleModule } from '@nestjs/schedule';
+import { ElasticsearchModule } from './elasticsearch/elasticsearch.module';
 
 @Module({
   imports: [
@@ -43,7 +42,7 @@ import { ScheduleModule } from '@nestjs/schedule';
         password: configService.get('DB_PASSWORD') || 'password',
         database: configService.get('DB_NAME') || 'staffdev',
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false, // Đảm bảo tắt đồng bộ hóa
+        synchronize: false, // Ensure synchronize is turned off
         logging: configService.get('NODE_ENV') === 'development',
       }),
     }),
@@ -52,26 +51,26 @@ import { ScheduleModule } from '@nestjs/schedule';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         try {
-          // Kiểm tra Redis config
+          // Check Redis config
           const redisHost = configService.get('REDIS_HOST');
           const redisPort = configService.get('REDIS_PORT');
           
           if (!redisHost || !redisPort) {
             console.warn('Redis configuration missing, falling back to memory store');
             return {
-              ttl: 60 * 60, // 1 giờ mặc định
-              max: 1000, // Số lượng items tối đa trong cache
+              ttl: 60 * 60, // 1 hour default
+              max: 1000, // Maximum items in cache
             };
           }
           
-          // Thử kết nối Redis
+          // Try to connect to Redis
           try {
             const Redis = require('redis');
             const client = Redis.createClient({
               host: redisHost,
               port: redisPort,
               socket: {
-                connectTimeout: 1000, // Giảm timeout xuống 1 giây
+                connectTimeout: 1000, // Reduce timeout to 1 second
               }
             });
             
@@ -83,52 +82,50 @@ import { ScheduleModule } from '@nestjs/schedule';
                   store: redisStore,
                   host: redisHost,
                   port: redisPort,
-                  ttl: 60 * 60, // 1 giờ mặc định
-                  max: 1000, // Số lượng items tối đa trong cache
+                  ttl: 60 * 60, // 1 hour default
+                  max: 1000, // Maximum items in cache
                 });
               });
               
               client.on('error', (err) => {
                 console.warn(`Failed to connect to Redis: ${err.message}, falling back to memory store`);
                 resolve({
-                  ttl: 60 * 60, // 1 giờ mặc định
-                  max: 1000, // Số lượng items tối đa trong cache
+                  ttl: 60 * 60, // 1 hour default
+                  max: 1000, // Maximum items in cache
                 });
               });
               
-              // Timeout sau 1 giây
+              // Timeout after 1 second
               setTimeout(() => {
                 try {
-                  client.quit().catch(() => {}); // Bắt lỗi nếu client đã đóng
+                  client.quit().catch(() => {}); // Catch error if client is already closed
                 } catch (e) {
-                  // Bỏ qua lỗi nếu client đã đóng
+                  // Ignore errors if client is already closed
                 }
                 console.warn('Redis connection timeout, falling back to memory store');
                 resolve({
-                  ttl: 60 * 60, // 1 giờ mặc định
-                  max: 1000, // Số lượng items tối đa trong cache
+                  ttl: 60 * 60, // 1 hour default
+                  max: 1000, // Maximum items in cache
                 });
               }, 1000);
             });
           } catch (error) {
             console.warn(`Error initializing Redis: ${error.message}, falling back to memory store`);
             return {
-              ttl: 60 * 60, // 1 giờ mặc định
-              max: 1000, // Số lượng items tối đa trong cache
+              ttl: 60 * 60, // 1 hour default
+              max: 1000, // Maximum items in cache
             };
           }
         } catch (error) {
           console.warn(`Generic error in cache config: ${error.message}, falling back to memory store`);
           return {
-            ttl: 60 * 60, // 1 giờ mặc định
-            max: 1000, // Số lượng items tối đa trong cache
+            ttl: 60 * 60, // 1 hour default
+            max: 1000, // Maximum items in cache
           };
         }
       },
       inject: [ConfigService],
     }),
-    ScheduleModule.forRoot(),
-    AppElasticsearchModule,
     AuthModule,
     UsersModule,
     TrainingModule,
@@ -143,6 +140,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     SeedModule,
     SharedModule,
     ProfilesModule,
+    ElasticsearchModule,
   ],
   controllers: [AppController, DatabaseController],
   providers: [AppService, DatabaseService],

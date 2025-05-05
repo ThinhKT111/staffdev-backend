@@ -9,12 +9,10 @@ import { UpdatePostDto } from './dto/update-post.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { CommentCounterService } from './services/comment-counter.service';
 import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
-import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
 export class ForumService implements OnModuleInit {
   private readonly logger = new Logger(ForumService.name);
-  private isElasticsearchAvailable = false;
 
   constructor(
     @InjectRepository(ForumPost)
@@ -24,47 +22,35 @@ export class ForumService implements OnModuleInit {
     private commentsRepository: Repository<ForumComment>,
     
     private commentCounterService: CommentCounterService,
-    private elasticsearchService: ElasticsearchService,
+    
+    private elasticsearchService: ElasticsearchService
   ) {}
   
   async onModuleInit() {
-    // Khởi tạo comment counters khi service được khởi tạo
+    // Initialize comment counters when service is initialized
     try {
       await this.initializeCommentCounters();
-      
-      // Kiểm tra Elasticsearch có khả dụng không
-      try {
-        await this.elasticsearchService.isElasticsearchAvailable();
-        this.isElasticsearchAvailable = true;
-        this.logger.log('Elasticsearch khả dụng cho ForumService');
-        
-        // Đồng bộ dữ liệu forum posts và comments vào Elasticsearch
-        this.syncForumDataToElasticsearch();
-      } catch (error) {
-        this.isElasticsearchAvailable = false;
-        this.logger.warn('Elasticsearch không khả dụng cho ForumService');
-      }
     } catch (error) {
       this.logger.error(`Failed to initialize comment counters: ${error.message}`);
     }
   }
-
+  
   private async initializeCommentCounters(): Promise<void> {
     try {
-      // Kiểm tra bảng forum_posts có tồn tại không
+      // Check if forum_posts table exists
       const checkTableExists = async () => {
         try {
-          // Thử đếm số lượng bản ghi để kiểm tra bảng có tồn tại không
+          // Try counting records to check if table exists
           await this.postsRepository.count();
           return true;
         } catch (error) {
           if (error.message && (error.message.includes('relation "forum_posts" does not exist') || 
-              error.message.includes('relation "ForumPosts" does not exist'))) {
+              error.message.includes('relation "forumposts" does not exist'))) {
             this.logger.warn('The forum_posts table does not exist yet. Skipping counter initialization.');
             return false;
           }
           this.logger.error(`Error checking forum_posts table: ${error.message}`);
-          throw error; // Re-throw nếu là lỗi khác
+          throw error; // Re-throw if it's a different error
         }
       };
 
@@ -73,78 +59,18 @@ export class ForumService implements OnModuleInit {
         return;
       }
 
-      // Lấy tất cả post IDs
+      // Get all post IDs
       const posts = await this.postsRepository.find({ select: ['post_id'] });
       const postIds = posts.map(post => post.post_id);
       
       this.logger.log(`Initializing comment counters for ${postIds.length} forum posts`);
       
-      // Khởi tạo counters
+      // Initialize counters
       await this.commentCounterService.initializeCounters(postIds);
       
       this.logger.log('Comment counters initialized successfully');
     } catch (error) {
       this.logger.error(`Failed to initialize comment counters: ${error.message}`);
-    }
-  }
-
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
-  async syncForumDataToElasticsearch() {
-    if (!this.isElasticsearchAvailable) {
-      this.logger.warn('Elasticsearch không khả dụng. Bỏ qua đồng bộ dữ liệu diễn đàn.');
-      return;
-    }
-
-    try {
-      this.logger.log('Bắt đầu đồng bộ dữ liệu diễn đàn với Elasticsearch...');
-      
-      // Đồng bộ forum posts
-      const posts = await this.postsRepository.find({
-        relations: ['user'],
-      });
-      
-      for (const post of posts) {
-        const commentCount = await this.commentCounterService.getCount(post.post_id);
-        
-        // Chuẩn bị dữ liệu cho Elasticsearch
-        const esPost = {
-          post_id: post.post_id,
-          user_id: post.user_id,
-          title: post.title,
-          content: post.content,
-          created_at: post.created_at,
-          updated_at: post.updated_at,
-          user_full_name: post.user ? post.user.full_name : 'Unknown User',
-          comment_count: commentCount,
-        };
-        
-        // Index vào Elasticsearch
-        await this.elasticsearchService.indexForumPost(esPost);
-      }
-      
-      // Đồng bộ forum comments
-      const comments = await this.commentsRepository.find({
-        relations: ['user', 'post'],
-      });
-      
-      for (const comment of comments) {
-        // Chuẩn bị dữ liệu cho Elasticsearch
-        const esComment = {
-          comment_id: comment.comment_id,
-          post_id: comment.post_id,
-          user_id: comment.user_id,
-          content: comment.content,
-          created_at: comment.created_at,
-          user_full_name: comment.user ? comment.user.full_name : 'Unknown User',
-        };
-        
-        // Index vào Elasticsearch
-        await this.elasticsearchService.indexForumComment(esComment);
-      }
-      
-      this.logger.log(`Đã đồng bộ ${posts.length} bài viết và ${comments.length} bình luận vào Elasticsearch`);
-    } catch (error) {
-      this.logger.error(`Lỗi khi đồng bộ dữ liệu diễn đàn: ${error.message}`);
     }
   }
 
@@ -155,7 +81,7 @@ export class ForumService implements OnModuleInit {
         order: { created_at: 'DESC' },
       });
       
-      // Thêm comment counts từ Redis
+      // Add comment counts from Redis
       for (const post of posts) {
         post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
       }
@@ -178,7 +104,7 @@ export class ForumService implements OnModuleInit {
         throw new NotFoundException(`Post with ID ${id} not found`);
       }
       
-      // Thêm comment count từ Redis
+      // Add comment count from Redis
       post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
       
       return post;
@@ -203,35 +129,18 @@ export class ForumService implements OnModuleInit {
       
       const savedPost = await this.postsRepository.save(post);
       
-      // Khởi tạo comment counter cho bài viết mới
+      // Initialize comment counter for new post
       await this.commentCounterService.setCount(savedPost.post_id, 0);
       
-      // Thêm commentCount vào kết quả
+      // Add commentCount to result
       savedPost['commentCount'] = 0;
       
-      // Nếu Elasticsearch khả dụng, index post
-      if (this.isElasticsearchAvailable) {
+      // Index in Elasticsearch if available
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
         try {
-          // Load user information
-          const postWithUser = await this.postsRepository.findOne({
-            where: { post_id: savedPost.post_id },
-            relations: ['user'],
-          });
-          
-          const esPost = {
-            post_id: savedPost.post_id,
-            user_id: savedPost.user_id,
-            title: savedPost.title,
-            content: savedPost.content,
-            created_at: savedPost.created_at,
-            updated_at: savedPost.updated_at,
-            user_full_name: postWithUser.user ? postWithUser.user.full_name : 'Unknown User',
-            comment_count: 0,
-          };
-          
-          await this.elasticsearchService.indexForumPost(esPost);
+          await this.elasticsearchService.indexForumPost(savedPost);
         } catch (error) {
-          this.logger.error(`Error indexing post to Elasticsearch: ${error.message}`);
+          this.logger.error(`Error indexing post in Elasticsearch: ${error.message}`);
         }
       }
       
@@ -256,24 +165,13 @@ export class ForumService implements OnModuleInit {
       
       const savedPost = await this.postsRepository.save(updatedPost);
       
-      // Thêm commentCount vào kết quả
+      // Add commentCount to result
       savedPost['commentCount'] = await this.commentCounterService.getCount(id);
       
-      // Nếu Elasticsearch khả dụng, update post
-      if (this.isElasticsearchAvailable) {
+      // Update in Elasticsearch if available
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
         try {
-          const esPost = {
-            post_id: savedPost.post_id,
-            user_id: savedPost.user_id,
-            title: savedPost.title,
-            content: savedPost.content,
-            created_at: savedPost.created_at,
-            updated_at: savedPost.updated_at,
-            user_full_name: savedPost.user ? savedPost.user.full_name : 'Unknown User',
-            comment_count: savedPost['commentCount'],
-          };
-          
-          await this.elasticsearchService.updateForumPost(esPost);
+          await this.elasticsearchService.indexForumPost(savedPost);
         } catch (error) {
           this.logger.error(`Error updating post in Elasticsearch: ${error.message}`);
         }
@@ -299,17 +197,15 @@ export class ForumService implements OnModuleInit {
       // Delete post
       await this.postsRepository.remove(post);
       
-      // Xóa comment counter
+      // Delete comment counter
       await this.commentCounterService.removeCount(id);
       
-      // Nếu Elasticsearch khả dụng, delete post và comments
-      if (this.isElasticsearchAvailable) {
+      // Remove from Elasticsearch if available
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
         try {
-          await this.elasticsearchService.deleteForumPost(id);
-          
-          // Lưu ý: Có thể cần thêm hàm elasticsearchService.deleteForumCommentsByPostId(id) để xóa các comments liên quan
+          await this.elasticsearchService.removeForumPostFromIndex(id);
         } catch (error) {
-          this.logger.error(`Error deleting post from Elasticsearch: ${error.message}`);
+          this.logger.error(`Error removing post from Elasticsearch: ${error.message}`);
         }
       }
     } catch (error) {
@@ -348,42 +244,18 @@ export class ForumService implements OnModuleInit {
       
       const savedComment = await this.commentsRepository.save(comment);
       
-      // Tăng counter
+      // Increment counter
       const commentCount = await this.commentCounterService.increment(createCommentDto.postId);
       
-      // Thêm commentCount vào kết quả
+      // Add totalComments to result
       savedComment['totalComments'] = commentCount;
       
-      // Nếu Elasticsearch khả dụng, index comment và update post
-      if (this.isElasticsearchAvailable) {
+      // Index in Elasticsearch if available
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
         try {
-          // Load user information
-          const commentWithUser = await this.commentsRepository.findOne({
-            where: { comment_id: savedComment.comment_id },
-            relations: ['user'],
-          });
-          
-          const esComment = {
-            comment_id: savedComment.comment_id,
-            post_id: savedComment.post_id,
-            user_id: savedComment.user_id,
-            content: savedComment.content,
-            created_at: savedComment.created_at,
-            user_full_name: commentWithUser.user ? commentWithUser.user.full_name : 'Unknown User',
-          };
-          
-          await this.elasticsearchService.indexForumComment(esComment);
-          
-          // Update comment count in post
-          const post = await this.findPost(createCommentDto.postId);
-          const esPost = {
-            post_id: post.post_id,
-            comment_count: commentCount,
-          };
-          
-          await this.elasticsearchService.updateForumPost(esPost);
+          await this.elasticsearchService.indexForumComment(savedComment);
         } catch (error) {
-          this.logger.error(`Error indexing comment to Elasticsearch: ${error.message}`);
+          this.logger.error(`Error indexing comment in Elasticsearch: ${error.message}`);
         }
       }
       
@@ -411,23 +283,15 @@ export class ForumService implements OnModuleInit {
       
       await this.commentsRepository.remove(comment);
       
-      // Giảm counter
-      const newCount = await this.commentCounterService.decrement(postId);
+      // Decrement counter
+      await this.commentCounterService.decrement(postId);
       
-      // Nếu Elasticsearch khả dụng, delete comment và update post
-      if (this.isElasticsearchAvailable) {
+      // Remove from Elasticsearch if available
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
         try {
-          await this.elasticsearchService.deleteForumComment(id);
-          
-          // Update comment count in post
-          const esPost = {
-            post_id: postId,
-            comment_count: newCount,
-          };
-          
-          await this.elasticsearchService.updateForumPost(esPost);
+          await this.elasticsearchService.removeForumCommentFromIndex(id);
         } catch (error) {
-          this.logger.error(`Error deleting comment from Elasticsearch: ${error.message}`);
+          this.logger.error(`Error removing comment from Elasticsearch: ${error.message}`);
         }
       }
     } catch (error) {
@@ -438,95 +302,62 @@ export class ForumService implements OnModuleInit {
       throw error;
     }
   }
-
-  // Phương thức tìm kiếm bài viết với Elasticsearch
-  async searchPosts(query: string, page: number = 1, size: number = 10): Promise<any> {
-    if (!this.isElasticsearchAvailable) {
-      // Fallback to regular search if Elasticsearch is not available
-      try {
-        const [posts, total] = await this.postsRepository.createQueryBuilder('post')
-          .leftJoinAndSelect('post.user', 'user')
-          .where('post.title ILIKE :query OR post.content ILIKE :query', { query: `%${query}%` })
-          .orderBy('post.created_at', 'DESC')
-          .skip((page - 1) * size)
-          .take(size)
-          .getManyAndCount();
-        
-        // Thêm comment counts
-        for (const post of posts) {
-          post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
+  
+  async searchPosts(query: string): Promise<ForumPost[]> {
+    try {
+      // Use Elasticsearch if available
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
+        try {
+          const searchResults = await this.elasticsearchService.searchForumPosts(query);
+          
+          if (searchResults.hits.length > 0) {
+            // Get post IDs from search results
+            const postIds = searchResults.hits.map(hit => hit.post_id);
+            
+            // Fetch complete post records from database
+            const posts = await this.postsRepository.find({
+              where: { post_id: postIds },
+              relations: ['user'],
+            });
+            
+            // Sort posts based on Elasticsearch score order
+            const sortedPosts = postIds.map(id => {
+              const post = posts.find(p => p.post_id === id);
+              if (post) {
+                // Add comment count to each post
+                this.commentCounterService.getCount(post.post_id)
+                  .then(count => post['commentCount'] = count)
+                  .catch(err => this.logger.error(`Error getting comment count: ${err.message}`));
+                
+                return post;
+              }
+              return null;
+            }).filter(p => p !== null) as ForumPost[];
+            
+            return sortedPosts;
+          }
+        } catch (error) {
+          this.logger.error(`Elasticsearch search failed, falling back to database: ${error.message}`);
         }
-        
-        return {
-          results: posts,
-          pagination: {
-            total,
-            page,
-            size,
-            pages: Math.ceil(total / size),
-          },
-        };
-      } catch (error) {
-        this.logger.error(`Error searching posts: ${error.message}`);
-        return {
-          results: [],
-          pagination: {
-            total: 0,
-            page,
-            size,
-            pages: 0,
-          },
-        };
       }
-    }
-    
-    // Use Elasticsearch
-    return this.elasticsearchService.searchForumPosts(query, page, size);
-  }
-
-  // Phương thức tìm kiếm bình luận với Elasticsearch
-  async searchComments(query: string, postId?: number, page: number = 1, size: number = 10): Promise<any> {
-    if (!this.isElasticsearchAvailable) {
-      // Fallback to regular search if Elasticsearch is not available
-      try {
-        let queryBuilder = this.commentsRepository.createQueryBuilder('comment')
-          .leftJoinAndSelect('comment.user', 'user')
-          .where('comment.content ILIKE :query', { query: `%${query}%` });
-        
-        if (postId) {
-          queryBuilder = queryBuilder.andWhere('comment.post_id = :postId', { postId });
-        }
-        
-        const [comments, total] = await queryBuilder
-          .orderBy('comment.created_at', 'DESC')
-          .skip((page - 1) * size)
-          .take(size)
-          .getManyAndCount();
-        
-        return {
-          results: comments,
-          pagination: {
-            total,
-            page,
-            size,
-            pages: Math.ceil(total / size),
-          },
-        };
-      } catch (error) {
-        this.logger.error(`Error searching comments: ${error.message}`);
-        return {
-          results: [],
-          pagination: {
-            total: 0,
-            page,
-            size,
-            pages: 0,
-          },
-        };
+      
+      // Fallback to database search
+      const posts = await this.postsRepository
+        .createQueryBuilder('post')
+        .leftJoinAndSelect('post.user', 'user')
+        .where('post.title ILIKE :query OR post.content ILIKE :query', { query: `%${query}%` })
+        .orderBy('post.created_at', 'DESC')
+        .getMany();
+      
+      // Add comment counts
+      for (const post of posts) {
+        post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
       }
+      
+      return posts;
+    } catch (error) {
+      this.logger.error(`Error searching posts: ${error.message}`);
+      return [];
     }
-    
-    // Use Elasticsearch
-    return this.elasticsearchService.searchForumComments(query, postId, page, size);
   }
 }
