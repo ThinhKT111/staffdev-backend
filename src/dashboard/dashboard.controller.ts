@@ -1,5 +1,5 @@
 // src/dashboard/dashboard.controller.ts
-import { Controller, Get, UseGuards, Query, Post } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards, Query } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -7,66 +7,77 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
 
 @Controller('dashboard')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER, UserRole.TEAM_LEADER)
+@UseGuards(JwtAuthGuard)
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get('overview')
-  getOverview() {
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER)
+  getDashboardOverview() {
     return this.dashboardService.getDashboardOverview();
   }
 
-  @Get('forum-stats')
-  getForumStats(@Query('days') days: string = '30') {
-    return this.dashboardService.getForumActivityStats(parseInt(days, 10));
+  @Get('forum')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER)
+  getForumActivityStats() {
+    return this.dashboardService.getForumActivityStats();
   }
 
-  @Get('document-stats')
-  getDocumentStats(@Query('days') days: string = '30') {
-    return this.dashboardService.getDocumentStats(parseInt(days, 10));
+  @Get('documents')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER)
+  getDocumentStats() {
+    return this.dashboardService.getDocumentStats();
   }
 
-  @Get('task-stats')
-  getTaskStats(@Query('days') days: string = '30') {
-    return this.dashboardService.getTaskStats(parseInt(days, 10));
+  @Get('tasks')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER)
+  getTaskStats() {
+    return this.dashboardService.getTaskStats();
   }
 
-  @Get('training-stats')
-  getTrainingStats(@Query('days') days: string = '30') {
-    return this.dashboardService.getTrainingStats(parseInt(days, 10));
+  @Get('stats')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER)
+  getStats() {
+    return this.dashboardService.getStats();
   }
 
   @Get('attendance-stats')
-  getAttendanceStats(@Query('days') days: string = '30') {
-    return this.dashboardService.getAttendanceStats(parseInt(days, 10));
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER, UserRole.TEAM_LEADER)
+  getAttendanceStats() {
+    return this.dashboardService.getAttendanceStats();
   }
 
-  @Get('user-stats')
+  @Get('training-stats')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER, UserRole.TEAM_LEADER)
+  getTrainingStats() {
+    return this.dashboardService.getTrainingStats();
+  }
+
+  @Get('users')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SENIOR_MANAGER)
   getUserStats() {
     return this.dashboardService.getUserStats();
   }
 
   @Post('refresh')
-  refreshDashboardData() {
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  refreshAllStats() {
     return this.dashboardService.refreshAllStats();
   }
-
-  @Get('logs')
+  
+  @Get('system-logs')
+  @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  getSystemLogs(
-    @Query('level') level?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('page') page: string = '1',
-    @Query('size') size: string = '50'
-  ) {
-    return this.dashboardService.getSystemLogs(
-      level,
-      startDate,
-      endDate,
-      parseInt(page, 10),
-      parseInt(size, 10)
-    );
+  getSystemLogs() {
+    return this.dashboardService.getSystemLogs();
   }
 }

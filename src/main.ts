@@ -40,7 +40,7 @@ async function bootstrap() {
     app.useGlobalFilters(new HttpExceptionFilter());
     
     // Use helmet for security headers
-    app.use(helmet());
+    app.use(helmet.default());
     
     // Enable CORS
     app.enableCors();

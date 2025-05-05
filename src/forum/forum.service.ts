@@ -316,7 +316,7 @@ export class ForumService implements OnModuleInit {
             
             // Fetch complete post records from database
             const posts = await this.postsRepository.find({
-              where: { post_id: postIds },
+              where: { post_id: In(postIds) },
               relations: ['user'],
             });
             

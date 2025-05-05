@@ -23,7 +23,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
 import { DatabaseService } from './database/database.service';
-import { ElasticsearchModule } from './elasticsearch/elasticsearch.module';
+import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
 
 @Module({
   imports: [
@@ -140,7 +140,7 @@ import { ElasticsearchModule } from './elasticsearch/elasticsearch.module';
     SeedModule,
     SharedModule,
     ProfilesModule,
-    ElasticsearchModule,
+    AppElasticsearchModule
   ],
   controllers: [AppController, DatabaseController],
   providers: [AppService, DatabaseService],

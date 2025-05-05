@@ -1,1427 +1,866 @@
 // src/elasticsearch/elasticsearch.service.ts
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ElasticsearchService as NestElasticsearchService } from '@nestjs/elasticsearch';
 import { ConfigService } from '@nestjs/config';
-import { Client } from '@elastic/elasticsearch';
-import { SearchResponse, SearchTotalHits, IndicesCreateRequest } from '@elastic/elasticsearch/lib/api/types';
+import { User } from '../entities/user.entity';
 import { Document } from '../entities/document.entity';
 import { ForumPost } from '../entities/forum-post.entity';
-import { ForumComment } from '../entities/forum-comment.entity';
 import { Task } from '../entities/task.entity';
-import { User } from '../entities/user.entity';
 import { Notification } from '../entities/notification.entity';
-
-type ElasticsearchIndex = 'forum_posts' | 'forum_comments' | 'documents' | 'tasks' | 'users' | 'system_logs';
 
 @Injectable()
 export class ElasticsearchService implements OnModuleInit {
   private readonly logger = new Logger(ElasticsearchService.name);
-  private client: Client | null = null;
   private isElasticsearchAvailable = false;
 
-  constructor(private configService: ConfigService) {
-    this.initializeClient();
-  }
+  constructor(
+    private readonly esService: NestElasticsearchService,
+    private configService: ConfigService,
+  ) {}
 
   async onModuleInit() {
+    // Kiểm tra kết nối Elasticsearch
     try {
-      await this.checkIndices();
-    } catch (error) {
-      this.logger.error(`Error initializing indices: ${error.message}`);
-    }
-  }
-
-  private initializeClient() {
-    try {
-      const elasticsearchHost = this.configService.get<string>('ELASTICSEARCH_HOST');
-      const elasticsearchPort = this.configService.get<number>('ELASTICSEARCH_PORT');
-
-      if (!elasticsearchHost || !elasticsearchPort) {
-        this.logger.warn('Elasticsearch configuration missing, some features will be disabled');
-        return;
-      }
-
-      this.client = new Client({
-        node: `http://${elasticsearchHost}:${elasticsearchPort}`
-      });
-
-      // Check connection
-      this.checkConnection();
-    } catch (error) {
-      this.logger.error(`Failed to initialize Elasticsearch client: ${error.message}`);
-    }
-  }
-
-  private async checkConnection() {
-    try {
-      if (!this.client) {
-        this.isElasticsearchAvailable = false;
-        return;
-      }
-
-      const response = await this.client.ping({ timeout: '3s' });
-      this.isElasticsearchAvailable = response !== undefined;
-      this.logger.log(`Elasticsearch connection ${this.isElasticsearchAvailable ? 'successful' : 'failed'}`);
+      const health = await this.esService.cluster.health();
+      this.isElasticsearchAvailable = health.status !== 'red';
+      this.logger.log(`Elasticsearch connection status: ${health.status}`);
+      
+      // Khởi tạo indices nếu chưa tồn tại
+      await this.setupIndices();
     } catch (error) {
       this.isElasticsearchAvailable = false;
-      this.logger.error(`Elasticsearch connection failed: ${error.message}`);
+      this.logger.error(`Failed to connect to Elasticsearch: ${error.message}`);
     }
   }
 
-  // Getter for other services to check if Elasticsearch is available
-  public getElasticsearchAvailability(): boolean {
-    return this.isElasticsearchAvailable;
-  }
-
-  private async checkIndices() {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return;
-    }
+  private async setupIndices() {
+    if (!this.isElasticsearchAvailable) return;
 
     try {
-      // Create indices if they don't exist
-      await this.createIndexIfNotExists('forum_posts');
-      await this.createIndexIfNotExists('forum_comments');
-      await this.createIndexIfNotExists('documents');
-      await this.createIndexIfNotExists('tasks');
-      await this.createIndexIfNotExists('users');
-      await this.createIndexIfNotExists('system_logs');
-    } catch (error) {
-      this.logger.error(`Error checking indices: ${error.message}`);
-      this.isElasticsearchAvailable = false;
-    }
-  }
-
-  private async createIndexIfNotExists(index: ElasticsearchIndex) {
-    try {
-      if (!this.client) return;
-
-      const exists = await this.client.indices.exists({ index });
-      if (!exists) {
-        await this.createIndex(index);
-        this.logger.log(`Created index: ${index}`);
-      }
-    } catch (error) {
-      this.logger.error(`Error creating index ${index}: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private async createIndex(index: ElasticsearchIndex) {
-    if (!this.client) return;
-
-    try {
-      switch (index) {
-        case 'forum_posts':
-          await this.client.indices.create({
-            index,
-            body: {
-              mappings: {
-                properties: {
-                  post_id: { type: 'integer' },
-                  user_id: { type: 'integer' },
-                  title: { type: 'text', analyzer: 'standard' },
-                  content: { type: 'text', analyzer: 'standard' },
-                  created_at: { type: 'date' },
-                  updated_at: { type: 'date' },
-                  comment_count: { type: 'integer' }
-                }
-              }
-            }
-          });
-          break;
-          
-        case 'forum_comments':
-          await this.client.indices.create({
-            index,
-            body: {
-              mappings: {
-                properties: {
-                  comment_id: { type: 'integer' },
-                  post_id: { type: 'integer' },
-                  user_id: { type: 'integer' },
-                  content: { type: 'text', analyzer: 'standard' },
-                  created_at: { type: 'date' }
-                }
-              }
-            }
-          });
-          break;
-          
-        case 'documents':
-          await this.client.indices.create({
-            index,
-            body: {
-              mappings: {
-                properties: {
-                  document_id: { type: 'integer' },
-                  title: { type: 'text', analyzer: 'standard' },
-                  file_url: { type: 'keyword' },
-                  category: { type: 'keyword' },
-                  uploaded_by: { type: 'integer' },
-                  uploaded_at: { type: 'date' },
-                  file_content: { type: 'text', analyzer: 'standard' }
-                }
-              }
-            }
-          });
-          break;
-          
-        case 'tasks':
-          await this.client.indices.create({
-            index,
-            body: {
-              mappings: {
-                properties: {
-                  task_id: { type: 'integer' },
-                  title: { type: 'text', analyzer: 'standard' },
-                  description: { type: 'text', analyzer: 'standard' },
-                  assigned_to: { type: 'integer' },
-                  assigned_by: { type: 'integer' },
-                  deadline: { type: 'date' },
-                  status: { type: 'keyword' },
-                  score: { type: 'float' },
-                  feedback: { type: 'text' },
-                  created_at: { type: 'date' },
-                  updated_at: { type: 'date' }
-                }
-              }
-            }
-          });
-          break;
-          
-        case 'users':
-          await this.client.indices.create({
-            index,
-            body: {
-              mappings: {
-                properties: {
-                  user_id: { type: 'integer' },
-                  cccd: { type: 'keyword' },
-                  email: { type: 'keyword' },
-                  phone: { type: 'keyword' },
-                  full_name: { type: 'text', analyzer: 'standard' },
-                  role: { type: 'keyword' },
-                  department_id: { type: 'integer' },
-                  created_at: { type: 'date' },
-                  updated_at: { type: 'date' }
-                }
-              }
-            }
-          });
-          break;
-          
-        case 'system_logs':
-          await this.client.indices.create({
-            index,
-            body: {
-              mappings: {
-                properties: {
-                  timestamp: { type: 'date' },
-                  event_type: { type: 'keyword' },
-                  message: { type: 'text' },
-                  details: { type: 'object', enabled: false },
-                  level: { type: 'keyword' }
-                }
-              }
-            }
-          });
-          break;
-      }
-    } catch (error) {
-      this.logger.error(`Error creating index ${index}: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // Index a forum post
-  async indexForumPost(post: ForumPost): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.index({
-        index: 'forum_posts',
-        id: String(post.post_id),
-        document: {
-          post_id: post.post_id,
-          user_id: post.user_id,
-          title: post.title,
-          content: post.content,
-          created_at: post.created_at,
-          updated_at: post.updated_at,
-          comment_count: post.comments?.length || 0
-        },
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error indexing forum post: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Remove a forum post from index
-  async removeForumPostFromIndex(postId: number): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.delete({
-        index: 'forum_posts',
-        id: String(postId),
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error removing forum post from index: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Search forum posts
-  async searchForumPosts(query: string, from: number = 0, size: number = 10): Promise<{ hits: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { hits: [], total: 0 };
-    }
-
-    try {
-      const response = await this.client.search({
-        index: 'forum_posts',
-        body: {
-          query: {
-            multi_match: {
-              query,
-              fields: ['title', 'content'],
-              type: 'best_fields',
-              fuzziness: 'AUTO'
-            }
-          },
-          _source: {
-            includes: ['*']
-          },
-          highlight: {
-            fields: {
-              title: {},
-              content: {}
-            }
-          },
-          sort: [
-            { _score: { order: 'desc' } },
-            { created_at: { order: 'desc' } }
-          ],
-          from,
-          size
-        }
-      });
-
-      const hits = response.hits.hits.map(hit => {
-        const source = hit._source as any;
-        return {
-          ...source,
-          score: hit._score,
-          highlights: hit.highlight
-        };
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
-
-      return {
-        hits,
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Error searching forum posts: ${error.message}`);
-      return { hits: [], total: 0 };
-    }
-  }
-
-  // Index a forum comment
-  async indexForumComment(comment: ForumComment): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.index({
-        index: 'forum_comments',
-        id: String(comment.comment_id),
-        document: {
-          comment_id: comment.comment_id,
-          post_id: comment.post_id,
-          user_id: comment.user_id,
-          content: comment.content,
-          created_at: comment.created_at
-        },
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error indexing forum comment: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Remove a forum comment from index
-  async removeForumCommentFromIndex(commentId: number): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.delete({
-        index: 'forum_comments',
-        id: String(commentId),
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error removing forum comment from index: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Search forum comments
-  async searchForumComments(query: string, from: number = 0, size: number = 10): Promise<{ hits: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { hits: [], total: 0 };
-    }
-
-    try {
-      const response = await this.client.search({
-        index: 'forum_comments',
-        body: {
-          query: {
-            multi_match: {
-              query,
-              fields: ['content'],
-              type: 'best_fields',
-              fuzziness: 'AUTO'
-            }
-          },
-          _source: {
-            includes: ['*']
-          },
-          highlight: {
-            fields: {
-              content: {}
-            }
-          },
-          sort: [
-            { _score: { order: 'desc' } },
-            { created_at: { order: 'desc' } }
-          ],
-          from,
-          size
-        }
-      });
-
-      const hits = response.hits.hits.map(hit => {
-        const source = hit._source as any;
-        return {
-          ...source,
-          score: hit._score,
-          highlights: hit.highlight
-        };
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
-
-      return {
-        hits,
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Error searching forum comments: ${error.message}`);
-      return { hits: [], total: 0 };
-    }
-  }
-
-  // Index a document
-  async indexDocument(document: Document, fileContent?: string): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.index({
-        index: 'documents',
-        id: String(document.document_id),
-        document: {
-          document_id: document.document_id,
-          title: document.title,
-          file_url: document.file_url,
-          category: document.category,
-          uploaded_by: document.uploaded_by,
-          uploaded_at: document.uploaded_at,
-          file_content: fileContent || ''
-        },
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error indexing document: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Remove a document from index
-  async removeDocumentFromIndex(documentId: number): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.delete({
-        index: 'documents',
-        id: String(documentId),
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error removing document from index: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Search documents
-  async searchDocuments(query: string, from: number = 0, size: number = 10): Promise<{ hits: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { hits: [], total: 0 };
-    }
-
-    try {
-      const response = await this.client.search({
-        index: 'documents',
-        body: {
-          query: {
-            multi_match: {
-              query,
-              fields: ['title', 'file_content'],
-              type: 'best_fields',
-              fuzziness: 'AUTO'
-            }
-          },
-          _source: {
-            includes: ['*']
-          },
-          highlight: {
-            fields: {
-              title: {},
-              file_content: {}
-            }
-          },
-          sort: [
-            { _score: { order: 'desc' } },
-            { uploaded_at: { order: 'desc' } }
-          ],
-          from,
-          size
-        }
-      });
-
-      const hits = response.hits.hits.map(hit => {
-        const source = hit._source as any;
-        return {
-          ...source,
-          score: hit._score,
-          highlights: hit.highlight
-        };
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
-
-      return {
-        hits,
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Error searching documents: ${error.message}`);
-      return { hits: [], total: 0 };
-    }
-  }
-
-  // Search for forum posts that match a specific user
-  async searchForumPostsByUser(query: string, userId: number, from: number = 0, size: number = 10): Promise<{ hits: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { hits: [], total: 0 };
-    }
-
-    try {
-      const body: any = {
-        query: {
-          bool: {
-            must: []
-          }
-        },
-        _source: {
-          includes: ['*']
-        },
-        highlight: {
-          fields: {
-            title: {},
-            content: {}
-          }
-        },
-        sort: [
-          { _score: { order: 'desc' } },
-          { created_at: { order: 'desc' } }
-        ],
-        from,
-        size
-      };
+      // Tạo các indices nếu chưa tồn tại
+      const indices = ['users', 'documents', 'forum_posts', 'tasks', 'notifications'];
       
-      // Add search query if provided
-      if (query) {
-        body.query.bool.must.push({
-          multi_match: {
-            query,
-            fields: ['title', 'content'],
-            type: 'best_fields',
-            fuzziness: 'AUTO'
-          }
-        });
-      }
-      
-      // Add user filter
-      body.query.bool.must.push({
-        term: { user_id: userId }
-      });
-
-      const response = await this.client.search({
-        index: 'forum_posts',
-        body
-      });
-
-      const hits = response.hits.hits.map(hit => {
-        const source = hit._source as any;
-        return {
-          ...source,
-          score: hit._score,
-          highlights: hit.highlight
-        };
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
-
-      return {
-        hits,
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Error searching forum posts by user: ${error.message}`);
-      return { hits: [], total: 0 };
-    }
-  }
-
-  // Search for tasks that match query
-  async searchTasks(query: string, from: number = 0, size: number = 10): Promise<{ hits: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { hits: [], total: 0 };
-    }
-
-    try {
-      const body: any = {
-        query: {
-          bool: {
-            must: [{
-              multi_match: {
-                query,
-                fields: ['title', 'description'],
-                type: 'best_fields',
-                fuzziness: 'AUTO'
+      for (const index of indices) {
+        const exists = await this.esService.indices.exists({ index });
+        
+        if (!exists) {
+          await this.esService.indices.create({
+            index,
+            body: {
+              settings: {
+                number_of_shards: 1,
+                number_of_replicas: 0,
+                analysis: {
+                  analyzer: {
+                    vietnamese_analyzer: {
+                      type: 'custom',
+                      tokenizer: 'standard',
+                      filter: ['lowercase', 'asciifolding', 'stop']
+                    }
+                  }
+                }
+              },
+              mappings: {
+                properties: this.getIndexMapping(index)
               }
-            }]
-          }
-        },
-        _source: {
-          includes: ['*']
-        },
-        highlight: {
-          fields: {
-            title: {},
-            description: {}
-          }
-        },
-        sort: [
-          { _score: { order: 'desc' } },
-          { deadline: { order: 'asc' } }
-        ],
-        from,
-        size
-      };
-
-      const response = await this.client.search({
-        index: 'tasks',
-        body
-      });
-
-      const hits = response.hits.hits.map(hit => {
-        const source = hit._source as any;
-        return {
-          ...source,
-          score: hit._score,
-          highlights: hit.highlight
-        };
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
-
-      return {
-        hits,
-        total
-      };
+            }
+          });
+          
+          this.logger.log(`Created index: ${index}`);
+        }
+      }
     } catch (error) {
-      this.logger.error(`Error searching tasks: ${error.message}`);
-      return { hits: [], total: 0 };
+      this.logger.error(`Error setting up indices: ${error.message}`);
     }
   }
 
-  // Search for tasks assigned to specific user
-  async searchUserTasks(userId: number, query?: string, status?: string, from: number = 0, size: number = 10): Promise<{ hits: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { hits: [], total: 0 };
+  private getIndexMapping(index: string) {
+    const commonFields = {
+      created_at: { type: 'date' },
+      updated_at: { type: 'date' }
+    };
+    
+    switch (index) {
+      case 'users':
+        return {
+          ...commonFields,
+          user_id: { type: 'integer' },
+          full_name: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer',
+            fields: {
+              keyword: { type: 'keyword' }
+            }
+          },
+          email: { type: 'keyword' },
+          phone: { type: 'keyword' },
+          department_name: { type: 'keyword' },
+          role: { type: 'keyword' }
+        };
+      case 'documents':
+        return {
+          ...commonFields,
+          document_id: { type: 'integer' },
+          title: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer',
+            fields: {
+              keyword: { type: 'keyword' }
+            }
+          },
+          category: { type: 'keyword' },
+          content: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer'
+          },
+          uploaded_by: { type: 'integer' },
+          uploader_name: { type: 'keyword' }
+        };
+      case 'forum_posts':
+        return {
+          ...commonFields,
+          post_id: { type: 'integer' },
+          title: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer',
+            fields: {
+              keyword: { type: 'keyword' }
+            }
+          },
+          content: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer'
+          },
+          user_id: { type: 'integer' },
+          author_name: { type: 'keyword' },
+          comment_count: { type: 'integer' }
+        };
+      case 'tasks':
+        return {
+          ...commonFields,
+          task_id: { type: 'integer' },
+          title: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer',
+            fields: {
+              keyword: { type: 'keyword' }
+            }
+          },
+          description: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer'
+          },
+          assigned_to: { type: 'integer' },
+          assigned_by: { type: 'integer' },
+          assignee_name: { type: 'keyword' },
+          assigner_name: { type: 'keyword' },
+          status: { type: 'keyword' },
+          deadline: { type: 'date' }
+        };
+      case 'notifications':
+        return {
+          ...commonFields,
+          notification_id: { type: 'integer' },
+          user_id: { type: 'integer' },
+          title: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer',
+            fields: {
+              keyword: { type: 'keyword' }
+            }
+          },
+          content: { 
+            type: 'text',
+            analyzer: 'vietnamese_analyzer'
+          },
+          type: { type: 'keyword' },
+          is_read: { type: 'boolean' }
+        };
+      default:
+        return commonFields;
+    }
+  }
+  
+  // Phương thức kiểm tra Elasticsearch có sẵn sàng không
+  checkHealth() {
+    return {
+      available: this.isElasticsearchAvailable,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  // Phương thức tìm kiếm chung
+  async search(index: string, query: any) {
+    if (!this.isElasticsearchAvailable) {
+      return { hits: { total: { value: 0 }, hits: [] } };
     }
 
     try {
-      const body: any = {
-        query: {
-          bool: {
-            must: [{ term: { assigned_to: userId } }]
-          }
-        },
-        _source: {
-          includes: ['*']
-        },
-        sort: [
-          { _score: { order: 'desc' } }
-        ],
-        from,
-        size
-      };
+      return await this.esService.search({
+        index,
+        body: query
+      });
+    } catch (error) {
+      this.logger.error(`Search error in index ${index}: ${error.message}`);
+      return { hits: { total: { value: 0 }, hits: [] } };
+    }
+  }
 
-      // Add query if provided
-      if (query) {
-        body.query.bool.must.push({
+  // Phương thức tìm kiếm người dùng
+  async searchUsers(term: string, size: number = 10) {
+    if (!this.isElasticsearchAvailable) {
+      return { results: [], total: 0 };
+    }
+
+    try {
+      const query = {
+        query: {
           multi_match: {
-            query,
-            fields: ['title', 'description'],
-            type: 'best_fields',
-            fuzziness: 'AUTO'
-          }
-        });
-      }
-
-      // Add status filter if provided
-      if (status) {
-        body.query.bool.must.push({ term: { status } });
-      }
-
-      const response = await this.client.search({
-        index: 'tasks',
-        body
-      });
-
-      const hits = response.hits.hits.map(hit => {
-        const source = hit._source as any;
-        return {
-          ...source,
-          score: hit._score
-        };
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
-
-      return {
-        hits,
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Error searching user tasks: ${error.message}`);
-      return { hits: [], total: 0 };
-    }
-  }
-
-  // Search for users
-  async searchUsers(query: string, from: number = 0, size: number = 10): Promise<{ hits: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { hits: [], total: 0 };
-    }
-
-    try {
-      const body: any = {
-        query: {
-          bool: {
-            must: [{
-              multi_match: {
-                query,
-                fields: ['full_name', 'email', 'phone'],
-                type: 'best_fields',
-                fuzziness: 'AUTO'
-              }
-            }]
+            query: term,
+            fields: ['full_name^3', 'email^2', 'phone', 'department_name']
           }
         },
-        _source: {
-          includes: ['*']
-        },
-        highlight: {
-          fields: {
-            full_name: {},
-            email: {},
-            phone: {}
-          }
-        },
-        sort: [
-          { _score: { order: 'desc' } }
-        ],
-        from,
         size
       };
 
-      const response = await this.client.search({
+      const response = await this.esService.search({
         index: 'users',
-        body
+        body: query
       });
 
-      const hits = response.hits.hits.map(hit => {
-        const source = hit._source as any;
-        return {
-          ...source,
-          score: hit._score,
-          highlights: hit.highlight
-        };
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
+      const results = response.hits.hits.map(hit => ({
+        ...hit._source,
+        score: hit._score
+      }));
 
       return {
-        hits,
-        total
+        results,
+        total: response.hits.total.value
       };
     } catch (error) {
-      this.logger.error(`Error searching users: ${error.message}`);
-      return { hits: [], total: 0 };
+      this.logger.error(`User search error: ${error.message}`);
+      return { results: [], total: 0 };
     }
   }
 
-  // Get forum statistics
-  async getForumStatistics(days: number = 30): Promise<any> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return {};
+  // Phương thức tìm kiếm tài liệu
+  async searchDocuments(term: string, category?: string, size: number = 10) {
+    if (!this.isElasticsearchAvailable) {
+      return { results: [], total: 0 };
     }
 
     try {
-      const body = {
-        size: 0,
-        query: {
-          range: {
-            created_at: {
-              gte: `now-${days}d/d`
-            }
-          }
-        },
-        aggs: {
-          posts_per_day: {
-            date_histogram: {
-              field: 'created_at',
-              calendar_interval: 'day',
-              format: 'yyyy-MM-dd'
-            }
-          },
-          comments_per_post: {
-            histogram: {
-              field: 'comment_count',
-              interval: 5
-            }
-          },
-          top_posters: {
-            terms: {
-              field: 'user_id',
-              size: 10
-            },
-            aggs: {
-              post_count: {
-                value_count: {
-                  field: 'post_id'
-                }
+      let query: any = {
+        bool: {
+          must: [
+            {
+              multi_match: {
+                query: term,
+                fields: ['title^3', 'content^2', 'category', 'uploader_name']
               }
             }
-          }
+          ]
         }
       };
 
-      const response = await this.client.search({
-        index: 'forum_posts',
-        body
-      });
+      if (category) {
+        query.bool.filter = [
+          { term: { category } }
+        ];
+      }
 
-      return response.aggregations;
-    } catch (error) {
-      this.logger.error(`Error getting forum statistics: ${error.message}`);
-      return {};
-    }
-  }
-
-  // Get document statistics
-  async getDocumentStatistics(days: number = 30): Promise<any> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return {};
-    }
-
-    try {
-      const body = {
-        size: 0,
-        query: {
-          range: {
-            uploaded_at: {
-              gte: `now-${days}d/d`
-            }
-          }
-        },
-        aggs: {
-          docs_per_day: {
-            date_histogram: {
-              field: 'uploaded_at',
-              calendar_interval: 'day',
-              format: 'yyyy-MM-dd'
-            }
-          },
-          docs_per_category: {
-            terms: {
-              field: 'category',
-              size: 10
-            }
-          },
-          top_uploaders: {
-            terms: {
-              field: 'uploaded_by',
-              size: 10
-            },
-            aggs: {
-              doc_count: {
-                value_count: {
-                  field: 'document_id'
-                }
-              }
-            }
-          }
-        }
-      };
-
-      const response = await this.client.search({
+      const response = await this.esService.search({
         index: 'documents',
-        body
+        body: {
+          query,
+          size
+        }
       });
 
-      return response.aggregations;
+      const results = response.hits.hits.map(hit => ({
+        ...hit._source,
+        score: hit._score
+      }));
+
+      return {
+        results,
+        total: response.hits.total.value
+      };
     } catch (error) {
-      this.logger.error(`Error getting document statistics: ${error.message}`);
-      return {};
+      this.logger.error(`Document search error: ${error.message}`);
+      return { results: [], total: 0 };
     }
   }
 
-  // Get task statistics
-  async getTaskStatistics(days: number = 30): Promise<any> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return {};
+  // Phương thức tìm kiếm bài viết diễn đàn
+  async searchForumPosts(term: string, size: number = 10) {
+    if (!this.isElasticsearchAvailable) {
+      return { results: [], total: 0 };
     }
 
     try {
-      const body = {
-        size: 0,
+      const query = {
         query: {
-          range: {
-            created_at: {
-              gte: `now-${days}d/d`
-            }
+          multi_match: {
+            query: term,
+            fields: ['title^3', 'content^2', 'author_name']
           }
         },
-        aggs: {
-          tasks_per_day: {
-            date_histogram: {
-              field: 'created_at',
-              calendar_interval: 'day',
-              format: 'yyyy-MM-dd'
-            }
-          },
-          tasks_by_status: {
-            terms: {
-              field: 'status',
-              size: 10
-            }
-          },
-          tasks_by_user: {
-            terms: {
-              field: 'assigned_to',
-              size: 10
-            },
-            aggs: {
-              task_count: {
-                value_count: {
-                  field: 'task_id'
-                }
+        size
+      };
+
+      const response = await this.esService.search({
+        index: 'forum_posts',
+        body: query
+      });
+
+      const results = response.hits.hits.map(hit => ({
+        ...hit._source,
+        score: hit._score
+      }));
+
+      return {
+        results,
+        total: response.hits.total.value
+      };
+    } catch (error) {
+      this.logger.error(`Forum post search error: ${error.message}`);
+      return { results: [], total: 0 };
+    }
+  }
+
+  // Phương thức tìm kiếm nhiệm vụ
+  async searchTasks(term: string, status?: string, size: number = 10) {
+    if (!this.isElasticsearchAvailable) {
+      return { results: [], total: 0 };
+    }
+
+    try {
+      let query: any = {
+        bool: {
+          must: [
+            {
+              multi_match: {
+                query: term,
+                fields: ['title^3', 'description^2', 'assignee_name', 'assigner_name']
               }
             }
-          },
-          tasks_deadline_histogram: {
-            date_histogram: {
-              field: 'deadline',
-              calendar_interval: 'day',
-              format: 'yyyy-MM-dd'
-            }
-          }
+          ]
         }
       };
 
-      const response = await this.client.search({
+      if (status) {
+        query.bool.filter = [
+          { term: { status } }
+        ];
+      }
+
+      const response = await this.esService.search({
         index: 'tasks',
-        body
+        body: {
+          query,
+          size
+        }
       });
 
-      return response.aggregations;
-    } catch (error) {
-      this.logger.error(`Error getting task statistics: ${error.message}`);
-      return {};
-    }
-  }
-  
-  // Index a task
-  async indexTask(task: Task): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
+      const results = response.hits.hits.map(hit => ({
+        ...hit._source,
+        score: hit._score
+      }));
 
-    try {
-      await this.client.index({
-        index: 'tasks',
-        id: String(task.task_id),
-        document: {
-          task_id: task.task_id,
-          title: task.title,
-          description: task.description,
-          assigned_to: task.assigned_to,
-          assigned_by: task.assigned_by,
-          deadline: task.deadline,
-          status: task.status,
-          score: task.score,
-          feedback: task.feedback,
-          created_at: task.created_at,
-          updated_at: task.updated_at
-        },
-        refresh: true
-      });
-      return true;
+      return {
+        results,
+        total: response.hits.total.value
+      };
     } catch (error) {
-      this.logger.error(`Error indexing task: ${error.message}`);
-      return false;
+      this.logger.error(`Task search error: ${error.message}`);
+      return { results: [], total: 0 };
     }
   }
 
-  // Remove a task from index
-  async removeTaskFromIndex(taskId: number): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
+  // Phương thức tìm kiếm thông báo
+  async searchNotifications(term: string, userId: number, size: number = 10) {
+    if (!this.isElasticsearchAvailable) {
+      return { results: [], total: 0 };
     }
 
     try {
-      await this.client.delete({
-        index: 'tasks',
-        id: String(taskId),
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error removing task from index: ${error.message}`);
-      return false;
-    }
-  }
-  
-  // Get user statistics
-  async getUserStatistics(): Promise<any> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return {};
-    }
-
-    try {
-      const body = {
-        size: 0,
-        aggs: {
-          users_by_role: {
-            terms: {
-              field: 'role',
-              size: 10
-            }
-          },
-          users_by_department: {
-            terms: {
-              field: 'department_id',
-              size: 10
+      const query = {
+        bool: {
+          must: [
+            {
+              multi_match: {
+                query: term,
+                fields: ['title^3', 'content^2']
+              }
             },
+            {
+              term: { user_id: userId }
+            }
+          ]
+        }
+      };
+
+      const response = await this.esService.search({
+        index: 'notifications',
+        body: {
+          query,
+          size,
+          sort: [
+            { created_at: { order: 'desc' } }
+          ]
+        }
+      });
+
+      const results = response.hits.hits.map(hit => ({
+        ...hit._source,
+        score: hit._score
+      }));
+
+      return {
+        results,
+        total: response.hits.total.value
+      };
+    } catch (error) {
+      this.logger.error(`Notification search error: ${error.message}`);
+      return { results: [], total: 0 };
+    }
+  }
+
+  // Phương thức lấy thống kê tài liệu
+  async getDocumentStatistics() {
+    if (!this.isElasticsearchAvailable) {
+      return {
+        total: 0,
+        byCategory: [],
+        recentUploads: []
+      };
+    }
+
+    try {
+      const [totalResponse, categoryAggs, recentDocs] = await Promise.all([
+        // Tổng số tài liệu
+        this.esService.count({ index: 'documents' }),
+        
+        // Thống kê theo category
+        this.esService.search({
+          index: 'documents',
+          body: {
+            size: 0,
             aggs: {
-              department_name: {
+              categories: {
                 terms: {
-                  field: 'department.department_name',
+                  field: 'category.keyword',
                   size: 10
                 }
               }
             }
           }
-        }
-      };
-
-      const response = await this.client.search({
-        index: 'users',
-        body
-      });
-
-      return response.aggregations;
-    } catch (error) {
-      this.logger.error(`Error getting user statistics: ${error.message}`);
-      return {};
-    }
-  }
-
-  // Get notification statistics
-  async getNotificationStatistics(): Promise<any> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return {};
-    }
-
-    try {
-      const body = {
-        size: 0,
-        aggs: {
-          notifications_by_type: {
-            terms: {
-              field: 'type',
-              size: 10
-            }
-          },
-          read_vs_unread: {
-            terms: {
-              field: 'is_read',
-              size: 2
-            }
-          },
-          notifications_over_time: {
-            date_histogram: {
-              field: 'created_at',
-              calendar_interval: 'day',
-              format: 'yyyy-MM-dd'
-            }
-          }
-        }
-      };
-
-      const response = await this.client.search({
-        index: 'notifications',
-        body
-      });
-
-      return response.aggregations;
-    } catch (error) {
-      this.logger.error(`Error getting notification statistics: ${error.message}`);
-      return {};
-    }
-  }
-
-  // Index a user
-  async indexUser(user: User): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.index({
-        index: 'users',
-        id: String(user.user_id),
-        document: {
-          user_id: user.user_id,
-          cccd: user.cccd,
-          email: user.email,
-          phone: user.phone,
-          full_name: user.full_name,
-          role: user.role,
-          department_id: user.department_id,
-          created_at: user.created_at,
-          updated_at: user.updated_at
-        },
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error indexing user: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Remove a user from index
-  async removeUserFromIndex(userId: number): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.delete({
-        index: 'users',
-        id: String(userId),
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error removing user from index: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Log system activity
-  async logSystemActivity(eventType: string, message: string, details?: any, level: string = 'info'): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
-    try {
-      await this.client.index({
-        index: 'system_logs',
-        document: {
-          timestamp: new Date(),
-          event_type: eventType,
-          message,
-          details: details || {},
-          level
-        },
-        refresh: true
-      });
-      return true;
-    } catch (error) {
-      this.logger.error(`Error logging system activity: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Get system logs
-  async getSystemLogs(from: number = 0, size: number = 100): Promise<{ logs: any[], total: number }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { logs: [], total: 0 };
-    }
-
-    try {
-      const body = {
-        sort: [
-          { timestamp: { order: 'desc' } }
-        ],
-        from,
-        size
-      };
-
-      const response = await this.client.search({
-        index: 'system_logs',
-        body
-      });
-
-      const logs = response.hits.hits.map(hit => {
-        return hit._source;
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
-
-      return {
-        logs,
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Error getting system logs: ${error.message}`);
-      return { logs: [], total: 0 };
-    }
-  }
-
-  // Get search metrics
-  async getSearchMetrics(from: Date, to: Date): Promise<any> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { queries: [], total: 0 };
-    }
-
-    try {
-      const body = {
-        query: {
-          bool: {
-            must: [
-              { term: { event_type: 'search' } },
-              {
-                range: {
-                  timestamp: {
-                    gte: from.toISOString(),
-                    lte: to.toISOString()
-                  }
-                }
-              }
+        }),
+        
+        // Tài liệu mới nhất
+        this.esService.search({
+          index: 'documents',
+          body: {
+            query: { match_all: {} },
+            size: 5,
+            sort: [
+              { created_at: { order: 'desc' } }
             ]
           }
-        },
-        sort: [
-          { timestamp: { order: 'desc' } }
-        ],
-        size: 100
-      };
-
-      const response = await this.client.search({
-        index: 'system_logs',
-        body
-      });
-
-      const logs = response.hits.hits.map(hit => {
-        return hit._source;
-      });
-
-      const totalHits = response.hits.total as SearchTotalHits;
-      const total = typeof totalHits === 'number' ? totalHits : (totalHits?.value || 0);
+        })
+      ]);
 
       return {
-        queries: logs,
-        total
+        total: totalResponse.count,
+        byCategory: categoryAggs.aggregations.categories.buckets.map(bucket => ({
+          category: bucket.key,
+          count: bucket.doc_count
+        })),
+        recentUploads: recentDocs.hits.hits.map(hit => hit._source)
       };
     } catch (error) {
-      this.logger.error(`Error getting search metrics: ${error.message}`);
-      return { queries: [], total: 0 };
+      this.logger.error(`Document statistics error: ${error.message}`);
+      return {
+        total: 0,
+        byCategory: [],
+        recentUploads: []
+      };
     }
   }
 
-  // Bulk index operations
-  async bulkIndex(index: ElasticsearchIndex, documents: any[]): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable || documents.length === 0) {
-      return false;
-    }
+  // Phương thức để index dữ liệu người dùng
+  async indexUser(user: User) {
+    if (!this.isElasticsearchAvailable) return;
 
     try {
-      const operations = documents.flatMap(doc => [
-        { index: { _index: index, _id: String(this.getDocumentId(doc, index)) } },
-        doc
-      ]);
+      await this.esService.index({
+        index: 'users',
+        id: user.user_id.toString(),
+        body: {
+          user_id: user.user_id,
+          full_name: user.full_name,
+          email: user.email,
+          phone: user.phone,
+          department_name: user.department?.department_name || '',
+          role: user.role,
+          created_at: user.created_at,
+          updated_at: user.updated_at
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error indexing user: ${error.message}`);
+    }
+  }
 
-      const { errors } = await this.client.bulk({ refresh: true, operations });
+  // Phương thức để index dữ liệu tài liệu
+  async indexDocument(document: Document) {
+    if (!this.isElasticsearchAvailable) return;
+
+    try {
+      await this.esService.index({
+        index: 'documents',
+        id: document.document_id.toString(),
+        body: {
+          document_id: document.document_id,
+          title: document.title,
+          category: document.category,
+          uploaded_by: document.uploaded_by,
+          uploader_name: document.uploader?.full_name || '',
+          created_at: document.uploaded_at,
+          updated_at: document.uploaded_at,
+          // Thêm trường content nếu có
+          content: '' // Cần trích xuất nội dung file nếu có thể
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error indexing document: ${error.message}`);
+    }
+  }
+
+  // Phương thức để index dữ liệu bài viết diễn đàn
+  async indexForumPost(post: ForumPost, commentCount: number) {
+    if (!this.isElasticsearchAvailable) return;
+
+    try {
+      await this.esService.index({
+        index: 'forum_posts',
+        id: post.post_id.toString(),
+        body: {
+          post_id: post.post_id,
+          title: post.title,
+          content: post.content,
+          user_id: post.user_id,
+          author_name: post.user?.full_name || '',
+          comment_count: commentCount,
+          created_at: post.created_at,
+          updated_at: post.updated_at
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error indexing forum post: ${error.message}`);
+    }
+  }
+
+  // Phương thức để index dữ liệu nhiệm vụ
+  async indexTask(task: Task) {
+    if (!this.isElasticsearchAvailable) return;
+
+    try {
+      await this.esService.index({
+        index: 'tasks',
+        id: task.task_id.toString(),
+        body: {
+          task_id: task.task_id,
+          title: task.title,
+          description: task.description,
+          assigned_to: task.assigned_to,
+          assigned_by: task.assigned_by,
+          assignee_name: task.assignedToUser?.full_name || '',
+          assigner_name: task.assignedByUser?.full_name || '',
+          status: task.status,
+          deadline: task.deadline,
+          created_at: task.created_at,
+          updated_at: task.updated_at
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error indexing task: ${error.message}`);
+    }
+  }
+
+  // Phương thức để index dữ liệu thông báo
+  async indexNotification(notification: Notification) {
+    if (!this.isElasticsearchAvailable) return;
+
+    try {
+      await this.esService.index({
+        index: 'notifications',
+        id: notification.notification_id.toString(),
+        body: {
+          notification_id: notification.notification_id,
+          user_id: notification.user_id,
+          title: notification.title,
+          content: notification.content,
+          type: notification.type,
+          is_read: notification.is_read,
+          created_at: notification.created_at
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error indexing notification: ${error.message}`);
+    }
+  }
+
+  // Phương thức để cập nhật thông báo
+  async updateNotification(notification: Notification) {
+    if (!this.isElasticsearchAvailable) return;
+
+    try {
+      await this.esService.update({
+        index: 'notifications',
+        id: notification.notification_id.toString(),
+        body: {
+          doc: {
+            is_read: notification.is_read,
+            updated_at: new Date()
+          }
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error updating notification: ${error.message}`);
+    }
+  }
+
+  // Phương thức để xóa thông báo
+  async deleteNotification(notificationId: number) {
+    if (!this.isElasticsearchAvailable) return;
+
+    try {
+      await this.esService.delete({
+        index: 'notifications',
+        id: notificationId.toString()
+      });
+    } catch (error) {
+      this.logger.error(`Error deleting notification: ${error.message}`);
+    }
+  }
+
+  // Thêm phương thức đồng bộ dữ liệu
+  async syncForumPosts(forumPosts: ForumPost[], commentCounts: Record<number, number>) {
+    if (!this.isElasticsearchAvailable) return { success: false, message: 'Elasticsearch not available' };
+    
+    try {
+      const operations = [];
       
-      if (errors) {
-        this.logger.error(`Errors in bulk indexing: ${JSON.stringify(errors)}`);
-        return false;
+      for (const post of forumPosts) {
+        operations.push({
+          index: {
+            _index: 'forum_posts',
+            _id: post.post_id.toString()
+          }
+        });
+        
+        operations.push({
+          post_id: post.post_id,
+          title: post.title,
+          content: post.content,
+          user_id: post.user_id,
+          author_name: post.user?.full_name || '',
+          comment_count: commentCounts[post.post_id] || 0,
+          created_at: post.created_at,
+          updated_at: post.updated_at
+        });
       }
       
-      return true;
-    } catch (error) {
-      this.logger.error(`Error in bulk indexing: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Helper to get document ID field based on index
-  private getDocumentId(doc: any, index: ElasticsearchIndex): string | number {
-    switch (index) {
-      case 'forum_posts':
-        return doc.post_id;
-      case 'forum_comments':
-        return doc.comment_id;
-      case 'documents':
-        return doc.document_id;
-      case 'tasks':
-        return doc.task_id;
-      case 'users':
-        return doc.user_id;
-      case 'system_logs':
-        return doc.log_id || `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-      default:
-        return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-    }
-  }
-
-  // Reindex all data from database (for recovery or initial setup)
-  async reindexAll(): Promise<{ success: boolean, indices: Record<string, number> }> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return { success: false, indices: {} };
-    }
-
-    const result: Record<string, number> = {
-      forum_posts: 0,
-      forum_comments: 0,
-      documents: 0,
-      tasks: 0,
-      users: 0
-    };
-
-    try {
-      // Clear and recreate indices
-      await Promise.all([
-        this.deleteIndex('forum_posts'),
-        this.deleteIndex('forum_comments'),
-        this.deleteIndex('documents'),
-        this.deleteIndex('tasks'),
-        this.deleteIndex('users')
-      ]);
-
-      await Promise.all([
-        this.createIndexIfNotExists('forum_posts'),
-        this.createIndexIfNotExists('forum_comments'),
-        this.createIndexIfNotExists('documents'),
-        this.createIndexIfNotExists('tasks'),
-        this.createIndexIfNotExists('users'),
-        this.createIndexIfNotExists('system_logs')
-      ]);
-
-      this.logger.log('All indices recreated');
+      if (operations.length > 0) {
+        await this.esService.bulk({ body: operations });
+      }
       
-      // Log activity
-      await this.logSystemActivity(
-        'reindex', 
-        'Started reindexing all data', 
-        null, 
-        'info'
-      );
-
       return { 
         success: true, 
-        indices: result 
+        message: `Synced ${forumPosts.length} forum posts`
       };
     } catch (error) {
-      this.logger.error(`Error reindexing all data: ${error.message}`);
-      
-      // Log activity
-      await this.logSystemActivity(
-        'reindex_error', 
-        `Error reindexing all data: ${error.message}`, 
-        { error: error.message }, 
-        'error'
-      );
-      
-      return { success: false, indices: result };
+      this.logger.error(`Error syncing forum posts: ${error.message}`);
+      return { 
+        success: false, 
+        message: `Error syncing forum posts: ${error.message}`
+      };
     }
   }
 
-  // Delete an index
-  private async deleteIndex(index: ElasticsearchIndex): Promise<boolean> {
-    if (!this.client || !this.isElasticsearchAvailable) {
-      return false;
-    }
-
+  async syncDocuments(documents: Document[]) {
+    if (!this.isElasticsearchAvailable) return { success: false, message: 'Elasticsearch not available' };
+    
     try {
-      const exists = await this.client.indices.exists({ index });
+      const operations = [];
       
-      if (exists) {
-        await this.client.indices.delete({ index });
-        this.logger.log(`Deleted index: ${index}`);
+      for (const doc of documents) {
+        operations.push({
+          index: {
+            _index: 'documents',
+            _id: doc.document_id.toString()
+          }
+        });
+        
+        operations.push({
+          document_id: doc.document_id,
+          title: doc.title,
+          category: doc.category,
+          uploaded_by: doc.uploaded_by,
+          uploader_name: doc.uploader?.full_name || '',
+          created_at: doc.uploaded_at,
+          updated_at: doc.uploaded_at,
+          content: '' // Cần trích xuất nội dung file nếu có thể
+        });
       }
       
-      return true;
+      if (operations.length > 0) {
+        await this.esService.bulk({ body: operations });
+      }
+      
+      return { 
+        success: true, 
+        message: `Synced ${documents.length} documents`
+      };
     } catch (error) {
-      this.logger.error(`Error deleting index ${index}: ${error.message}`);
-      return false;
+      this.logger.error(`Error syncing documents: ${error.message}`);
+      return { 
+        success: false, 
+        message: `Error syncing documents: ${error.message}`
+      };
+    }
+  }
+
+  async syncTasks(tasks: Task[]) {
+    if (!this.isElasticsearchAvailable) return { success: false, message: 'Elasticsearch not available' };
+    
+    try {
+      const operations = [];
+      
+      for (const task of tasks) {
+        operations.push({
+          index: {
+            _index: 'tasks',
+            _id: task.task_id.toString()
+          }
+        });
+        
+        operations.push({
+          task_id: task.task_id,
+          title: task.title,
+          description: task.description,
+          assigned_to: task.assigned_to,
+          assigned_by: task.assigned_by,
+          assignee_name: task.assignedToUser?.full_name || '',
+          assigner_name: task.assignedByUser?.full_name || '',
+          status: task.status,
+          deadline: task.deadline,
+          created_at: task.created_at,
+          updated_at: task.updated_at
+        });
+      }
+      
+      if (operations.length > 0) {
+        await this.esService.bulk({ body: operations });
+      }
+      
+      return { 
+        success: true, 
+        message: `Synced ${tasks.length} tasks`
+      };
+    } catch (error) {
+      this.logger.error(`Error syncing tasks: ${error.message}`);
+      return { 
+        success: false, 
+        message: `Error syncing tasks: ${error.message}`
+      };
+    }
+  }
+
+  async syncNotifications(notifications: Notification[]) {
+    if (!this.isElasticsearchAvailable) return { success: false, message: 'Elasticsearch not available' };
+    
+    try {
+      const operations = [];
+      
+      for (const notification of notifications) {
+        operations.push({
+          index: {
+            _index: 'notifications',
+            _id: notification.notification_id.toString()
+          }
+        });
+        
+        operations.push({
+          notification_id: notification.notification_id,
+          user_id: notification.user_id,
+          title: notification.title,
+          content: notification.content,
+          type: notification.type,
+          is_read: notification.is_read,
+          created_at: notification.created_at
+        });
+      }
+      
+      if (operations.length > 0) {
+        await this.esService.bulk({ body: operations });
+      }
+      
+      return { 
+        success: true, 
+        message: `Synced ${notifications.length} notifications`
+      };
+    } catch (error) {
+      this.logger.error(`Error syncing notifications: ${error.message}`);
+      return { 
+        success: false, 
+        message: `Error syncing notifications: ${error.message}`
+      };
+    }
+  }
+
+  async syncUsers(users: User[]) {
+    if (!this.isElasticsearchAvailable) return { success: false, message: 'Elasticsearch not available' };
+    
+    try {
+      const operations = [];
+      
+      for (const user of users) {
+        operations.push({
+          index: {
+            _index: 'users',
+            _id: user.user_id.toString()
+          }
+        });
+        
+        operations.push({
+          user_id: user.user_id,
+          full_name: user.full_name,
+          email: user.email,
+          phone: user.phone,
+          department_name: user.department?.department_name || '',
+          role: user.role,
+          created_at: user.created_at,
+          updated_at: user.updated_at
+        });
+      }
+      
+      if (operations.length > 0) {
+        await this.esService.bulk({ body: operations });
+      }
+      
+      return { 
+        success: true, 
+        message: `Synced ${users.length} users`
+      };
+    } catch (error) {
+      this.logger.error(`Error syncing users: ${error.message}`);
+      return { 
+        success: false, 
+        message: `Error syncing users: ${error.message}`
+      };
     }
   }
 }

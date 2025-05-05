@@ -51,7 +51,7 @@ export class NotificationsService implements OnModuleInit {
     
     // Kiểm tra Elasticsearch có khả dụng không
     try {
-      await this.elasticsearchService.isElasticsearchAvailable();
+      await this.elasticsearchService.checkHealth().available;
       this.isElasticsearchAvailable = true;
       this.logger.log('Elasticsearch khả dụng cho NotificationsService');
       

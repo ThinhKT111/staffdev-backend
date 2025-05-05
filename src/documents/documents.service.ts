@@ -46,7 +46,7 @@ export class DocumentsService {
             
             // Fetch complete documents from database
             return await this.documentsRepository.find({
-              where: { document_id: docIds },
+              where: { document_id: In(documentIds) },
               relations: ['uploader'],
               order: { uploaded_at: 'DESC' },
             });
@@ -284,7 +284,7 @@ export class DocumentsService {
             
             // Fetch complete document records from database
             const documents = await this.documentsRepository.find({
-              where: { document_id: documentIds },
+              where: { document_id: In(documentIds) },
               relations: ['uploader'],
             });
             
