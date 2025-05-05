@@ -1,5 +1,5 @@
 // src/forum/forum.controller.ts
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query } from '@nestjs/common';
 import { ForumService } from './forum.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
@@ -62,5 +62,33 @@ export class ForumController {
   @Delete('comments/:id')
   deleteComment(@Param('id') id: string) {
     return this.forumService.deleteComment(+id);
+  }
+  
+  @Get('search/posts')
+  searchPosts(
+    @Query('query') query: string,
+    @Query('page') page: string = '1',
+    @Query('size') size: string = '10'
+  ) {
+    return this.forumService.searchPosts(
+      query,
+      parseInt(page, 10),
+      parseInt(size, 10)
+    );
+  }
+  
+  @Get('search/comments')
+  searchComments(
+    @Query('query') query: string,
+    @Query('postId') postId?: string,
+    @Query('page') page: string = '1',
+    @Query('size') size: string = '10'
+  ) {
+    return this.forumService.searchComments(
+      query,
+      postId ? parseInt(postId, 10) : undefined,
+      parseInt(page, 10),
+      parseInt(size, 10)
+    );
   }
 }

@@ -22,12 +22,15 @@ import { ProfilesModule } from './profiles/profiles.module';
 import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
-
+import { DatabaseService } from './database/database.service';
+import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: '.env',
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -40,7 +43,8 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
         password: configService.get('DB_PASSWORD') || 'password',
         database: configService.get('DB_NAME') || 'staffdev',
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false,
+        synchronize: false, // Đảm bảo tắt đồng bộ hóa
+        logging: configService.get('NODE_ENV') === 'development',
       }),
     }),
     CacheModule.registerAsync({
@@ -76,7 +80,7 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
                 client.quit();
                 console.log('Redis connected successfully, using Redis store');
                 resolve({
-                  store: require('cache-manager-redis-store'),
+                  store: redisStore,
                   host: redisHost,
                   port: redisPort,
                   ttl: 60 * 60, // 1 giờ mặc định
@@ -123,6 +127,8 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
       },
       inject: [ConfigService],
     }),
+    ScheduleModule.forRoot(),
+    AppElasticsearchModule,
     AuthModule,
     UsersModule,
     TrainingModule,
@@ -139,7 +145,7 @@ import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limi
     ProfilesModule,
   ],
   controllers: [AppController, DatabaseController],
-  providers: [AppService],
+  providers: [AppService, DatabaseService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

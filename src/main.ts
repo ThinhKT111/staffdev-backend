@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import * as compression from 'compression';
+import * as helmet from 'helmet';
 
 // Custom WebSocket adapter cho Nginx proxy
 class CustomIoAdapter extends IoAdapter {
@@ -35,6 +36,7 @@ async function bootstrap() {
     
     // Thêm middleware compression để giảm kích thước phản hồi
     app.use(compression());
+    app.use(helmet());
     
     // Kiểm tra thư mục uploads tồn tại chưa
     const uploadsDir = process.env.UPLOAD_DIR || 'uploads';

@@ -59,9 +59,23 @@ export class NotificationsController {
     return this.notificationsService.remove(+id);
   }
   
-  // Thêm endpoint để kiểm tra trạng thái thông báo
   @Get('status/:jobId')
   getJobStatus(@Param('jobId') jobId: string) {
     return this.notificationsService.getNotificationStatus(jobId);
+  }
+  
+  @Get('search')
+  searchNotifications(
+    @Query('query') query: string,
+    @Query('userId') userId: string,
+    @Query('page') page: string = '1',
+    @Query('size') size: string = '10'
+  ) {
+    return this.notificationsService.searchNotifications(
+      query,
+      parseInt(userId, 10),
+      parseInt(page, 10),
+      parseInt(size, 10)
+    );
   }
 }

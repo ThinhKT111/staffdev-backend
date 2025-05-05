@@ -115,4 +115,19 @@ export class DocumentsController {
   remove(@Param('id') id: string) {
     return this.documentsService.remove(+id);
   }
+  
+  @Get('search')
+  searchDocuments(
+    @Query('query') query: string,
+    @Query('category') category?: string,
+    @Query('page') page: string = '1',
+    @Query('size') size: string = '10'
+  ) {
+    return this.documentsService.searchDocuments(
+      query,
+      category,
+      parseInt(page, 10),
+      parseInt(size, 10)
+    );
+  }
 }
