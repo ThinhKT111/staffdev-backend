@@ -1,25 +1,24 @@
 // src/elasticsearch/elasticsearch.config.ts
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { ConfigService } from '@nestjs/config';
+import { ElasticsearchModuleOptions } from '@nestjs/elasticsearch';
 
-@Injectable()
-export class ElasticsearchConfig implements OnModuleInit {
-  private readonly logger = new Logger(ElasticsearchConfig.name);
-
-  constructor(
-    private readonly elasticsearchService: ElasticsearchService,
-    private readonly configService: ConfigService,
-  ) {}
-
-  async onModuleInit() {
-    // Kiểm tra kết nối Elasticsearch
-    try {
-      await this.elasticsearchService.ping();
-      this.logger.log('Elasticsearch connection successful');
-    } catch (error) {
-      this.logger.warn(`Elasticsearch connection failed: ${error.message}`);
-      this.logger.warn('Search functionality will be limited to database queries');
-    }
+export const getElasticsearchConfig = (
+  configService: ConfigService
+): ElasticsearchModuleOptions => {
+  const host = configService.get<string>('ELASTICSEARCH_HOST') || 'http://localhost:9200';
+  const username = configService.get<string>('ELASTICSEARCH_USERNAME');
+  const password = configService.get<string>('ELASTICSEARCH_PASSWORD');
+  
+  const config: ElasticsearchModuleOptions = {
+    node: host,
+  };
+  
+  if (username && password) {
+    config.auth = {
+      username,
+      password
+    };
   }
-}
+  
+  return config;
+};

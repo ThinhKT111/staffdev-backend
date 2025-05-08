@@ -6,16 +6,14 @@ import { setupSwagger } from './swagger.config';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as compression from 'compression';
-import * as helmet from 'helmet';
+import helmet from 'helmet'; // Sửa lỗi import
 
 async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule);
     
-    // Áp dụng middleware bảo mật
-    app.use(compression()); // Nén dữ liệu
-    app.use(helmet()); // Bảo mật headers
+    // Áp dụng helmet middleware
+    app.use(helmet());  // Sửa lỗi gọi hàm
     
     // Kiểm tra thư mục uploads tồn tại chưa
     const uploadsDir = process.env.UPLOAD_DIR || 'uploads';
@@ -45,11 +43,7 @@ async function bootstrap() {
     app.useGlobalFilters(new HttpExceptionFilter());
     
     // Enable CORS
-    app.enableCors({
-      origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
-      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-      credentials: true,
-    });
+    app.enableCors();
     
     // Set global prefix
     app.setGlobalPrefix('api');

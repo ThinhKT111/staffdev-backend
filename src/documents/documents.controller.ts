@@ -32,11 +32,6 @@ export class DocumentsController {
     return this.documentsService.findAll();
   }
 
-  @Get('search')
-  searchDocuments(@Query('q') query: string, @Query('category') category?: string) {
-    return this.documentsService.searchDocuments(query, category);
-  }
-
   @Get('categories')
   getCategories() {
     return this.documentsService.getCategories();
@@ -119,5 +114,15 @@ export class DocumentsController {
   @Roles(UserRole.ADMIN, UserRole.TEAM_LEADER)
   remove(@Param('id') id: string) {
     return this.documentsService.remove(+id);
+  }
+
+  @Get('search')
+  @UseGuards(JwtAuthGuard)
+  async searchDocuments(
+    @Query('q') query: string = '',
+    @Query('category') category?: string,
+    @Query('limit') limit: number = 10
+  ) {
+    return this.documentsService.searchDocuments(query, category, limit);
   }
 }

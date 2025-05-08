@@ -23,12 +23,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
 import { DatabaseService } from './database/database.service';
-import { ElasticsearchModule } from '@nestjs/elasticsearch';
-import { ScheduleModule } from '@nestjs/schedule';
-import { DashboardModule } from './dashboard/dashboard.module';
-import { ElasticsearchConfig } from './elasticsearch/elasticsearch.config';
-import { compression } from 'compression';
-import { helmet } from 'helmet';
+import helmet from 'helmet'; // Sửa lỗi import
 
 @Module({
   imports: [
@@ -47,12 +42,8 @@ import { helmet } from 'helmet';
         password: configService.get('DB_PASSWORD') || 'password',
         database: configService.get('DB_NAME') || 'staffdev',
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false, // Đảm bảo tắt đồng bộ hóa trong production
+        synchronize: false, // Đảm bảo tắt đồng bộ hóa
         logging: configService.get('NODE_ENV') === 'development',
-        ssl: configService.get('DB_SSL') === 'true' ? true : undefined,
-        extra: configService.get('DB_SSL') === 'true' 
-          ? { ssl: { rejectUnauthorized: false } } 
-          : undefined,
       }),
     }),
     CacheModule.registerAsync({
@@ -76,12 +67,11 @@ import { helmet } from 'helmet';
           try {
             const Redis = require('redis');
             const client = Redis.createClient({
+              host: redisHost,
+              port: redisPort,
               socket: {
-                host: redisHost,
-                port: redisPort,
                 connectTimeout: 1000, // Giảm timeout xuống 1 giây
-              },
-              password: configService.get('REDIS_PASSWORD') || undefined,
+              }
             });
             
             return new Promise((resolve, reject) => {
@@ -90,11 +80,8 @@ import { helmet } from 'helmet';
                 console.log('Redis connected successfully, using Redis store');
                 resolve({
                   store: redisStore,
-                  socket: {
-                    host: redisHost,
-                    port: redisPort,
-                  },
-                  password: configService.get('REDIS_PASSWORD') || undefined,
+                  host: redisHost,
+                  port: redisPort,
                   ttl: 60 * 60, // 1 giờ mặc định
                   max: 1000, // Số lượng items tối đa trong cache
                 });
@@ -139,23 +126,6 @@ import { helmet } from 'helmet';
       },
       inject: [ConfigService],
     }),
-    ElasticsearchModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: async (configService: ConfigService) => ({
-        node: configService.get('ELASTICSEARCH_NODE') || 'http://localhost:9200',
-        auth: {
-          username: configService.get('ELASTICSEARCH_USERNAME') || '',
-          password: configService.get('ELASTICSEARCH_PASSWORD') || '',
-        },
-        maxRetries: 5,
-        requestTimeout: 10000,
-        ssl: {
-          rejectUnauthorized: configService.get('ELASTICSEARCH_SSL_VERIFY') !== 'false',
-        },
-      }),
-    }),
-    ScheduleModule.forRoot(),
     AuthModule,
     UsersModule,
     TrainingModule,
@@ -170,10 +140,9 @@ import { helmet } from 'helmet';
     SeedModule,
     SharedModule,
     ProfilesModule,
-    DashboardModule,
   ],
   controllers: [AppController, DatabaseController],
-  providers: [AppService, DatabaseService, ElasticsearchConfig],
+  providers: [AppService, DatabaseService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

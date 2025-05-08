@@ -1,14 +1,13 @@
 // src/forum/forum.service.ts
 import { Injectable, NotFoundException, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ForumPost } from '../entities/forum-post.entity';
 import { ForumComment } from '../entities/forum-comment.entity';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { CommentCounterService } from './services/comment-counter.service';
-import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
 
 @Injectable()
 export class ForumService implements OnModuleInit {
@@ -22,7 +21,6 @@ export class ForumService implements OnModuleInit {
     private commentsRepository: Repository<ForumComment>,
     
     private commentCounterService: CommentCounterService,
-    private elasticsearchService: ElasticsearchService
   ) {}
   
   async onModuleInit() {
@@ -134,11 +132,6 @@ export class ForumService implements OnModuleInit {
       // Thêm commentCount vào kết quả
       savedPost['commentCount'] = 0;
       
-      // Index bài viết vào Elasticsearch
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        await this.elasticsearchService.indexForumPost(savedPost, 0);
-      }
-      
       return savedPost;
     } catch (error) {
       this.logger.error(`Error creating post: ${error.message}`);
@@ -163,11 +156,6 @@ export class ForumService implements OnModuleInit {
       // Thêm commentCount vào kết quả
       savedPost['commentCount'] = await this.commentCounterService.getCount(id);
       
-      // Update post trong Elasticsearch
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        await this.elasticsearchService.indexForumPost(savedPost, savedPost['commentCount']);
-      }
-      
       return savedPost;
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -184,11 +172,6 @@ export class ForumService implements OnModuleInit {
       
       // Delete all comments for this post
       await this.commentsRepository.delete({ post_id: id });
-      
-      // Xóa post khỏi Elasticsearch
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        await this.elasticsearchService.removeForumPostFromIndex(id);
-      }
       
       // Delete post
       await this.postsRepository.remove(post);
@@ -231,29 +214,11 @@ export class ForumService implements OnModuleInit {
       
       const savedComment = await this.commentsRepository.save(comment);
       
-      // Lấy thông tin user để cập nhật Elasticsearch
-      const commentWithUser = await this.commentsRepository.findOne({
-        where: { comment_id: savedComment.comment_id },
-        relations: ['user'],
-      });
-      
       // Tăng counter
       const commentCount = await this.commentCounterService.increment(createCommentDto.postId);
       
       // Thêm commentCount vào kết quả
       savedComment['totalComments'] = commentCount;
-      
-      // Cập nhật post trong Elasticsearch
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        // 1. Lấy post để cập nhật
-        const post = await this.findPost(createCommentDto.postId);
-        
-        // 2. Index comment mới vào Elasticsearch
-        await this.elasticsearchService.indexForumComment(commentWithUser);
-        
-        // 3. Cập nhật post với comment count mới
-        await this.elasticsearchService.indexForumPost(post, commentCount);
-      }
       
       return savedComment;
     } catch (error) {
@@ -277,21 +242,10 @@ export class ForumService implements OnModuleInit {
       
       const postId = comment.post_id;
       
-      // Xóa comment khỏi Elasticsearch
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        await this.elasticsearchService.removeForumCommentFromIndex(id);
-      }
-      
       await this.commentsRepository.remove(comment);
       
       // Giảm counter
-      const newCount = await this.commentCounterService.decrement(postId);
-      
-      // Cập nhật post trong Elasticsearch với comment count mới
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        const post = await this.findPost(postId);
-        await this.elasticsearchService.indexForumPost(post, newCount);
-      }
+      await this.commentCounterService.decrement(postId);
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -301,95 +255,77 @@ export class ForumService implements OnModuleInit {
     }
   }
   
-  // Tìm kiếm bài viết
-  async searchPosts(query: string): Promise<ForumPost[]> {
+  // Sửa lỗi trong phương thức này
+  async searchPosts(keyword: string): Promise<ForumPost[]> {
     try {
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        // Tìm kiếm bằng Elasticsearch
-        const searchResult = await this.elasticsearchService.searchForumPosts(query);
-        
-        if (searchResult.total > 0) {
-          // Lấy IDs từ kết quả tìm kiếm
-          const postIds = searchResult.results.map(post => parseInt(post.post_id));
-          
-          // Lấy đầy đủ thông tin posts từ database
-          const posts = await this.postsRepository.find({
-            where: { post_id: In(postIds) },
-            relations: ['user'],
-          });
-          
-          // Sắp xếp lại theo thứ tự kết quả tìm kiếm
-          const sortedPosts = postIds.map(id => 
-            posts.find(post => post.post_id === id)
-          ).filter(Boolean);
-          
-          // Thêm comment counts
-          for (const post of sortedPosts) {
-            post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
-          }
-          
-          return sortedPosts;
-        }
-      }
-      
-      // Fallback: Tìm kiếm đơn giản bằng database
       const posts = await this.postsRepository.createQueryBuilder('post')
         .leftJoinAndSelect('post.user', 'user')
-        .where('post.title ILIKE :query OR post.content ILIKE :query', { query: `%${query}%` })
+        .where('post.title ILIKE :keyword OR post.content ILIKE :keyword', { keyword: `%${keyword}%` })
         .orderBy('post.created_at', 'DESC')
         .getMany();
       
-      // Thêm comment counts
+      // Thêm comment counts từ Redis
+      const enhancedPosts = [];
       for (const post of posts) {
-        post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
+        if (post) {  // Kiểm tra null/undefined
+          post['commentCount'] = await this.commentCounterService.getCount(post.post_id);
+          enhancedPosts.push(post);
+        }
       }
       
-      return posts;
+      return enhancedPosts;
     } catch (error) {
       this.logger.error(`Error searching posts: ${error.message}`);
       return [];
     }
   }
   
-  // Tìm kiếm bình luận
-  async searchComments(query: string, postId?: number): Promise<ForumComment[]> {
+  // Sửa lỗi trong phương thức này
+  async getPopularPosts(limit: number = 5): Promise<ForumPost[]> {
     try {
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        // Tìm kiếm bằng Elasticsearch
-        const searchResult = await this.elasticsearchService.searchForumComments(query, postId);
-        
-        if (searchResult.total > 0) {
-          // Lấy IDs từ kết quả tìm kiếm
-          const commentIds = searchResult.results.map(comment => parseInt(comment.comment_id));
-          
-          // Lấy đầy đủ thông tin comments từ database
-          const comments = await this.commentsRepository.find({
-            where: { comment_id: In(commentIds) },
-            relations: ['user', 'post'],
-          });
-          
-          // Sắp xếp lại theo thứ tự kết quả tìm kiếm
-          return commentIds.map(id => 
-            comments.find(comment => comment.comment_id === id)
-          ).filter(Boolean);
+      // Lấy tất cả posts
+      const allPosts = await this.postsRepository.find({
+        relations: ['user'],
+        order: { created_at: 'DESC' },
+      });
+      
+      // Lấy comment counts cho mỗi post
+      const postsWithComments: (ForumPost & { commentCount: number })[] = [];
+      
+      for (const post of allPosts) {
+        if (post) {  // Kiểm tra null/undefined
+          const commentCount = await this.commentCounterService.getCount(post.post_id);
+          postsWithComments.push({
+            ...post,
+            commentCount
+          } as ForumPost & { commentCount: number });
         }
       }
       
-      // Fallback: Tìm kiếm đơn giản bằng database
-      let queryBuilder = this.commentsRepository.createQueryBuilder('comment')
-        .leftJoinAndSelect('comment.user', 'user')
-        .leftJoinAndSelect('comment.post', 'post')
-        .where('comment.content ILIKE :query', { query: `%${query}%` });
+      // Sắp xếp theo số lượng comment giảm dần
+      postsWithComments.sort((a, b) => b.commentCount - a.commentCount);
       
-      if (postId) {
-        queryBuilder = queryBuilder.andWhere('comment.post_id = :postId', { postId });
-      }
-      
-      return queryBuilder
-        .orderBy('comment.created_at', 'DESC')
-        .getMany();
+      // Trả về limit post phổ biến nhất
+      return postsWithComments.slice(0, limit) as ForumPost[];
     } catch (error) {
-      this.logger.error(`Error searching comments: ${error.message}`);
+      this.logger.error(`Error fetching popular posts: ${error.message}`);
+      return [];
+    }
+  }
+
+  async searchComments(postId: number, keyword: string): Promise<ForumComment[]> {
+    try {
+      const comments = await this.commentsRepository
+        .createQueryBuilder('comment')
+        .leftJoinAndSelect('comment.user', 'user')
+        .where('comment.post_id = :postId', { postId })
+        .andWhere('comment.content ILIKE :keyword', { keyword: `%${keyword}%` })
+        .orderBy('comment.created_at', 'ASC')
+        .getMany();
+      
+      return comments;
+    } catch (error) {
+      this.logger.error(`Error searching comments for post ${postId}: ${error.message}`);
       return [];
     }
   }

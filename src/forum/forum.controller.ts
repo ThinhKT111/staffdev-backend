@@ -54,11 +54,6 @@ export class ForumController {
     return this.forumService.findCommentsByPost(+id);
   }
 
-  @Get('comments/search')
-  searchComments(@Query('q') query: string, @Query('postId') postId?: string) {
-    return this.forumService.searchComments(query, postId ? +postId : undefined);
-  }
-
   @Post('comments')
   createComment(@Body() createCommentDto: CreateCommentDto, @Request() req) {
     // Use current user if userId not provided
@@ -72,5 +67,14 @@ export class ForumController {
   @Delete('comments/:id')
   deleteComment(@Param('id') id: string) {
     return this.forumService.deleteComment(+id);
+  }
+
+  @Get('posts/:id/comments/search')
+  @UseGuards(JwtAuthGuard)
+  searchComments(
+    @Param('id') id: string,
+    @Query('q') query: string = ''
+  ) {
+    return this.forumService.searchComments(+id, query);
   }
 }

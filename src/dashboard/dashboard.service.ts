@@ -1,11 +1,11 @@
 // src/dashboard/dashboard.service.ts
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull, Between, In, LessThan, MoreThan } from 'typeorm';
+import { Repository, Not, IsNull, Between } from 'typeorm';
 import { User } from '../entities/user.entity';
-import { Task, TaskStatus } from '../entities/task.entity';
+import { Task } from '../entities/task.entity';
 import { Attendance } from '../entities/attendance.entity';
-import { UserCourse, CourseStatus } from '../entities/user-course.entity';
+import { UserCourse } from '../entities/user-course.entity';
 import { Course } from '../entities/course.entity';
 import { ForumPost } from '../entities/forum-post.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -69,27 +69,10 @@ export class DashboardService {
       .where('post.created_at >= :date', { date: thirtyDaysAgo })
       .getCount();
     
-    // Nhiệm vụ sắp đến hạn (trong 7 ngày tới)
-    const today = new Date();
-    const sevenDaysLater = new Date();
-    sevenDaysLater.setDate(today.getDate() + 7);
-    
-    const upcomingDeadlines = await this.tasksRepository
-      .createQueryBuilder('task')
-      .where('task.deadline BETWEEN :today AND :sevenDaysLater', {
-        today,
-        sevenDaysLater,
-      })
-      .andWhere('task.status NOT IN (:...statuses)', {
-        statuses: [TaskStatus.COMPLETED, TaskStatus.REJECTED],
-      })
-      .getMany();
-    
     const stats = {
       totalUsers,
       usersByRole,
       tasksByStatus,
-      upcomingDeadlines,
       recentPosts,
     };
     
@@ -176,7 +159,7 @@ export class DashboardService {
     const averageScore = await this.userCoursesRepository
       .createQueryBuilder('userCourse')
       .select('AVG(userCourse.score)', 'average')
-      .where('userCourse.status = :status', { status: CourseStatus.COMPLETED })
+      .where('userCourse.status = :status', { status: 'Completed' })
       .andWhere('userCourse.score IS NOT NULL')
       .getRawOne();
     
@@ -192,67 +175,48 @@ export class DashboardService {
     return stats;
   }
   
-  // Phương thức để lấy dữ liệu dashboard tổng hợp cho trang chủ
-  async getDashboardSummary() {
-    // Kiểm tra cache
-    const cachedSummary = await this.cacheManager.get('dashboard_summary');
-    
-    if (cachedSummary) {
-      return cachedSummary;
-    }
-    
-    // Lấy dữ liệu từ các phương thức khác
-    const [generalStats, attendanceStats, trainingStats] = await Promise.all([
-      this.getStats(),
-      this.getAttendanceStats(),
-      this.getTrainingStats(),
-    ]);
-    
-    // Lấy 5 nhiệm vụ gần nhất sắp đến hạn
-    const today = new Date();
-    const upcomingTasks = await this.tasksRepository.find({
-      where: {
-        deadline: MoreThan(today),
-        status: Not(In([TaskStatus.COMPLETED, TaskStatus.REJECTED])),
-      },
-      relations: ['assignedToUser', 'assignedByUser'],
-      order: {
-        deadline: 'ASC',
-      },
-      take: 5,
-    });
-    
-    // Lấy 5 bài đăng diễn đàn mới nhất
-    const recentPosts = await this.forumPostsRepository.find({
-      relations: ['user'],
-      order: {
-        created_at: 'DESC',
-      },
-      take: 5,
-    });
-    
-    // Tổng hợp dữ liệu
-    const summary = {
-      totalUsers: generalStats.totalUsers,
-      checkInsToday: attendanceStats.checkInsToday,
-      pendingLeaves: attendanceStats.pendingLeaves,
-      activeCourses: trainingStats.activeCourses,
-      courseRegistrationByStatus: trainingStats.courseRegistrationByStatus,
-      upcomingDeadlines: generalStats.upcomingDeadlines?.slice(0, 5), // Lấy 5 phần tử đầu tiên
-      recentPosts,
-    };
-    
-    // Cache lại kết quả trong 15 phút
-    await this.cacheManager.set('dashboard_summary', summary, 900);
-    
-    return summary;
-  }
-  
   // Phương thức để xóa cache khi cần
   async invalidateDashboardCache() {
     await this.cacheManager.del('dashboard_stats');
     await this.cacheManager.del('attendance_stats');
     await this.cacheManager.del('training_stats');
-    await this.cacheManager.del('dashboard_summary');
+    
+    // Thông báo đã xóa cache
+    return {
+      message: 'Dashboard caches have been invalidated. Stats will be recalculated on next access.',
+      timestamp: new Date()
+    };
+  }
+  
+  // Thêm phương thức tổng hợp thống kê
+  async getDashboardOverview() {
+    // Lấy dữ liệu từ các phương thức có sẵn
+    const generalStats = await this.getStats();
+    const attendanceStats = await this.getAttendanceStats();
+    const trainingStats = await this.getTrainingStats();
+    
+    // Truy vấn các deadline sắp tới
+    const today = new Date();
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+    
+    const upcomingDeadlines = await this.tasksRepository.count({
+      where: {
+        deadline: Between(today, nextWeek),
+        status: Not(In(['Completed', 'Rejected']))
+      }
+    });
+    
+    // Kết hợp thống kê - đảm bảo truy cập thuộc tính an toàn
+    const overview = {
+      totalUsers: generalStats?.totalUsers || 0,
+      checkInsToday: attendanceStats?.checkInsToday || 0,
+      pendingLeaves: attendanceStats?.pendingLeaves || 0,
+      activeCourses: trainingStats?.activeCourses || 0,
+      courseRegistrationByStatus: trainingStats?.courseRegistrationByStatus || [],
+      upcomingDeadlines: upcomingDeadlines || 0
+    };
+    
+    return overview;
   }
 }

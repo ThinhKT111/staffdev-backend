@@ -1,10 +1,11 @@
 // src/elasticsearch/elasticsearch.controller.ts
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Headers } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ElasticsearchService } from './elasticsearch.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
+import { TaskStatus } from '../entities/task.entity';
 
 @Controller('elasticsearch')
 @UseGuards(JwtAuthGuard)
@@ -12,127 +13,55 @@ export class ElasticsearchController {
   constructor(private readonly elasticsearchService: ElasticsearchService) {}
 
   @Get('health')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
   checkHealth() {
     return this.elasticsearchService.checkHealth();
   }
 
-  @Get('search/users')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.TEAM_LEADER, UserRole.SENIOR_MANAGER)
-  searchUsers(
-    @Query('term') term: string,
-    @Query('size') size?: number
-  ) {
-    return this.elasticsearchService.searchUsers(term, size);
-  }
-
-  @Get('search/documents')
-  searchDocuments(
-    @Query('term') term: string,
-    @Query('category') category?: string,
-    @Query('size') size?: number
-  ) {
-    return this.elasticsearchService.searchDocuments(term, category, size);
-  }
-
-  @Get('search/forum')
-  searchForum(
-    @Query('term') term: string,
-    @Query('size') size?: number
-  ) {
-    return this.elasticsearchService.searchForumPosts(term, size);
-  }
-
   @Get('search/tasks')
-  searchTasks(
-    @Query('term') term: string,
-    @Query('status') status?: string,
-    @Query('size') size?: number
+  @UseGuards(JwtAuthGuard)
+  async searchTasks(
+    @Query('q') query: string = '',
+    @Query('status') statusStr?: string,
+    @Query('limit') limit: number = 10
   ) {
-    return this.elasticsearchService.searchTasks(term, status, size);
+    // Chuyển đổi status string thành enum TaskStatus nếu có
+    let status: TaskStatus | undefined;
+    
+    if (statusStr) {
+      switch (statusStr) {
+        case 'Pending':
+          status = TaskStatus.PENDING;
+          break;
+        case 'InProgress':
+          status = TaskStatus.IN_PROGRESS;
+          break;
+        case 'Completed':
+          status = TaskStatus.COMPLETED;
+          break;
+        case 'Rejected':
+          status = TaskStatus.REJECTED;
+          break;
+      }
+    }
+    
+    return this.elasticsearchService.searchTasks(query, status, limit);
   }
 
   @Get('search/notifications')
-  searchNotifications(
-    @Query('term') term: string,
+  @UseGuards(JwtAuthGuard)
+  async searchNotifications(
     @Query('userId') userId: number,
-    @Query('size') size?: number
+    @Query('q') query: string = '',
+    @Query('limit') limit: number = 10
   ) {
-    return this.elasticsearchService.searchNotifications(term, userId, size);
+    return this.elasticsearchService.searchNotifications(userId, query, limit);
   }
 
   @Get('statistics/documents')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.TEAM_LEADER, UserRole.SENIOR_MANAGER)
-  getDocumentStatistics() {
+  @UseGuards(JwtAuthGuard)
+  async getDocumentStatistics() {
     return this.elasticsearchService.getDocumentStatistics();
-  }
-
-  @Post('sync/all')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async syncAllIndices() {
-    // Implementation note: this should be delegated to a background job
-    // as it may take significant time to complete
-    return {
-      message: 'Sync all data started',
-      status: 'processing',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  @Post('sync/forum')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async syncForumData(@Body() data: any) {
-    return {
-      message: 'Forum data sync started',
-      status: 'processing',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  @Post('sync/documents')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async syncDocumentsData(@Body() data: any) {
-    return {
-      message: 'Documents data sync started',
-      status: 'processing',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  @Post('sync/tasks')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async syncTasksData(@Body() data: any) {
-    return {
-      message: 'Tasks data sync started',
-      status: 'processing',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  @Post('sync/notifications')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async syncNotificationsData(@Body() data: any) {
-    return {
-      message: 'Notifications data sync started',
-      status: 'processing',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  @Post('sync/users')
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async syncUsersData(@Body() data: any) {
-    return {
-      message: 'Users data sync started',
-      status: 'processing',
-      timestamp: new Date().toISOString()
-    };
   }
 }
