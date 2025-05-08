@@ -2,342 +2,334 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ElasticsearchService as NestElasticsearchService } from '@nestjs/elasticsearch';
 import { ConfigService } from '@nestjs/config';
-import { TaskStatus } from '../entities/task.entity';
 
 @Injectable()
 export class ElasticsearchService implements OnModuleInit {
   private readonly logger = new Logger(ElasticsearchService.name);
-  private indexPrefix: string;
-  private isConnected: boolean = false;
+  private indices = {
+    tasks: 'tasks',
+    documents: 'documents',
+    forum_posts: 'forum_posts',
+  };
 
   constructor(
     private readonly esService: NestElasticsearchService,
-    private configService: ConfigService
-  ) {
-    // Prefix cho các index
-    this.indexPrefix = this.configService.get<string>('ELASTICSEARCH_INDEX_PREFIX') || 'staffdev';
-  }
+    private readonly configService: ConfigService,
+  ) {}
 
   async onModuleInit() {
     try {
-      // Kiểm tra kết nối
-      const health = await this.esService.cluster.health();
-      this.logger.log(`Elasticsearch connected, cluster status: ${health.status}`);
-      this.isConnected = true;
-      
-      // Kiểm tra và tạo các index nếu cần
-      await this.ensureIndexes();
+      await this.checkConnection();
+      await this.createIndices();
+    } catch (error) {
+      this.logger.warn(`Elasticsearch initialization failed: ${error.message}`);
+    }
+  }
+
+  private async checkConnection() {
+    try {
+      const info = await this.esService.info();
+      this.logger.log(`Connected to Elasticsearch: ${info.version.number}`);
+      return true;
     } catch (error) {
       this.logger.error(`Failed to connect to Elasticsearch: ${error.message}`);
-      this.isConnected = false;
-    }
-  }
-
-  private async ensureIndexes(): Promise<void> {
-    try {
-      // Danh sách các index cần tạo
-      const indexes = [
-        `${this.indexPrefix}_tasks`,
-        `${this.indexPrefix}_users`,
-        `${this.indexPrefix}_documents`,
-        `${this.indexPrefix}_courses`,
-        `${this.indexPrefix}_forum_posts`,
-        `${this.indexPrefix}_notifications`
-      ];
-      
-      for (const index of indexes) {
-        const exists = await this.esService.indices.exists({ index });
-        
-        if (!exists) {
-          this.logger.log(`Creating index: ${index}`);
-          
-          await this.esService.indices.create({
-            index,
-            body: {
-              mappings: {
-                properties: {
-                  id: { type: 'keyword' },
-                  title: { type: 'text' },
-                  content: { type: 'text' },
-                  created_at: { type: 'date' },
-                  updated_at: { type: 'date' }
-                }
-              }
-            }
-          });
-        }
-      }
-    } catch (error) {
-      this.logger.error(`Failed to ensure indexes: ${error.message}`);
-    }
-  }
-
-  // Tìm kiếm task
-  async searchTasks(keyword: string, status?: TaskStatus, limit: number = 10): Promise<any> {
-    if (!this.isConnected) {
-      return { results: [], total: 0 };
-    }
-    
-    try {
-      // Xây dựng query
-      const query: any = {
-        bool: {
-          must: [
-            {
-              multi_match: {
-                query: keyword,
-                fields: ['title', 'description']
-              }
-            }
-          ]
-        }
-      };
-      
-      // Thêm filter theo status nếu có
-      if (status) {
-        query.bool.must.push({
-          term: { status }
-        });
-      }
-      
-      // Thực hiện search
-      const response = await this.esService.search({
-        index: `${this.indexPrefix}_tasks`,
-        body: {
-          query,
-          size: limit,
-          sort: [
-            { deadline: { order: 'asc' } }
-          ]
-        }
-      });
-      
-      // Chuyển đổi response
-      const hits = response.hits?.hits || [];
-      const total = typeof response.hits.total === 'number' 
-        ? response.hits.total 
-        : response.hits.total?.value || 0;
-      
-      return {
-        results: hits.map(hit => ({ 
-          id: hit._id,
-          score: hit._score,
-          ...hit._source
-        })),
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Search tasks error: ${error.message}`);
-      return { results: [], total: 0 };
-    }
-  }
-
-  // Kiểm tra kết nối và trạng thái cluster
-  async checkHealth(): Promise<any> {
-    try {
-      const health = await this.esService.cluster.health();
-      const info = await this.esService.info();
-      
-      return {
-        status: health.status,
-        clusterName: health.cluster_name,
-        nodeCount: health.number_of_nodes,
-        esVersion: info.version.number,
-        connected: this.isConnected
-      };
-    } catch (error) {
-      this.logger.error(`Health check error: ${error.message}`);
-      return {
-        status: 'red',
-        connected: false,
-        error: error.message
-      };
-    }
-  }
-
-  // Kiểm tra xem Elasticsearch có khả dụng không
-  getElasticsearchAvailability(): boolean {
-    return this.isConnected;
-  }
-
-  // Phương thức mới để tìm kiếm thông báo
-  async searchNotifications(userId: number, keyword: string, limit: number = 10): Promise<any> {
-    if (!this.isConnected) {
-      return { results: [], total: 0 };
-    }
-    
-    try {
-      // Xây dựng query
-      const query: any = {
-        bool: {
-          must: [
-            {
-              term: { user_id: userId }
-            },
-            {
-              multi_match: {
-                query: keyword,
-                fields: ['title', 'content']
-              }
-            }
-          ]
-        }
-      };
-      
-      // Thực hiện search
-      const response = await this.esService.search({
-        index: `${this.indexPrefix}_notifications`,
-        body: {
-          query,
-          size: limit,
-          sort: [
-            { created_at: { order: 'desc' } }
-          ]
-        }
-      });
-      
-      // Chuyển đổi response
-      const hits = response.hits?.hits || [];
-      const total = typeof response.hits.total === 'number' 
-        ? response.hits.total 
-        : response.hits.total?.value || 0;
-      
-      return {
-        results: hits.map(hit => ({ 
-          id: hit._id,
-          score: hit._score,
-          ...hit._source
-        })),
-        total
-      };
-    } catch (error) {
-      this.logger.error(`Search notifications error: ${error.message}`);
-      return { results: [], total: 0 };
-    }
-  }
-
-  // Phương thức để chỉ mục một thông báo
-  async indexNotification(notification: any): Promise<boolean> {
-    if (!this.isConnected) {
       return false;
     }
-    
+  }
+
+  private async createIndices() {
+    const indexPromises = [
+      this.createTasksIndex(),
+      this.createDocumentsIndex(),
+      this.createForumPostsIndex(),
+    ];
+
+    await Promise.all(indexPromises);
+  }
+
+  private async createTasksIndex() {
+    try {
+      const exists = await this.esService.indices.exists({ index: this.indices.tasks });
+      
+      if (!exists) {
+        await this.esService.indices.create({
+          index: this.indices.tasks,
+          body: {
+            mappings: {
+              properties: {
+                id: { type: 'keyword' },
+                title: { type: 'text' },
+                description: { type: 'text' },
+                status: { type: 'keyword' },
+                deadline: { type: 'date' },
+                created_at: { type: 'date' },
+                updated_at: { type: 'date' },
+              },
+            },
+          },
+        });
+        this.logger.log(`Created index: ${this.indices.tasks}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error creating tasks index: ${error.message}`);
+    }
+  }
+
+  private async createDocumentsIndex() {
+    try {
+      const exists = await this.esService.indices.exists({ index: this.indices.documents });
+      
+      if (!exists) {
+        await this.esService.indices.create({
+          index: this.indices.documents,
+          body: {
+            mappings: {
+              properties: {
+                id: { type: 'keyword' },
+                title: { type: 'text' },
+                category: { type: 'keyword' },
+                content: { type: 'text' },
+                uploaded_at: { type: 'date' },
+              },
+            },
+          },
+        });
+        this.logger.log(`Created index: ${this.indices.documents}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error creating documents index: ${error.message}`);
+    }
+  }
+
+  private async createForumPostsIndex() {
+    try {
+      const exists = await this.esService.indices.exists({ index: this.indices.forum_posts });
+      
+      if (!exists) {
+        await this.esService.indices.create({
+          index: this.indices.forum_posts,
+          body: {
+            mappings: {
+              properties: {
+                id: { type: 'keyword' },
+                title: { type: 'text' },
+                content: { type: 'text' },
+                created_at: { type: 'date' },
+                updated_at: { type: 'date' },
+              },
+            },
+          },
+        });
+        this.logger.log(`Created index: ${this.indices.forum_posts}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error creating forum_posts index: ${error.message}`);
+    }
+  }
+
+  // Index a task
+  async indexTask(task: any) {
     try {
       await this.esService.index({
-        index: `${this.indexPrefix}_notifications`,
-        id: notification.notification_id.toString(),
+        index: this.indices.tasks,
+        id: task.task_id.toString(),
+        document: {
+          id: task.task_id.toString(),
+          title: task.title,
+          description: task.description,
+          status: task.status,
+          deadline: task.deadline,
+          created_at: task.created_at,
+          updated_at: task.updated_at,
+        },
+      });
+      return true;
+    } catch (error) {
+      this.logger.error(`Error indexing task: ${error.message}`);
+      return false;
+    }
+  }
+
+  // Get upcoming task deadlines
+  async getUpcomingTasks(limit = 10) {
+    try {
+      const response = await this.esService.search({
+        index: this.indices.tasks,
         body: {
-          user_id: notification.user_id,
-          title: notification.title,
-          content: notification.content,
-          type: notification.type,
-          is_read: notification.is_read,
-          created_at: notification.created_at
-        }
+          size: limit,
+          query: {
+            bool: {
+              must: [
+                {
+                  range: {
+                    deadline: {
+                      gte: 'now',
+                      lte: 'now+7d',
+                    },
+                  },
+                },
+                {
+                  terms: {
+                    status: ['Pending', 'InProgress'],
+                  },
+                },
+              ],
+            },
+          },
+          sort: [
+            { deadline: { order: 'asc' } },
+          ],
+        },
       });
-      
+
+      if (response.hits.total.value === 0) {
+        return [];
+      }
+
+      return response.hits.hits.map(hit => ({
+        id: hit._id,
+        ...hit._source,
+      }));
+    } catch (error) {
+      this.logger.error(`Error getting upcoming tasks: ${error.message}`);
+      return [];
+    }
+  }
+
+  // Index a document
+  async indexDocument(document: any) {
+    try {
+      await this.esService.index({
+        index: this.indices.documents,
+        id: document.document_id.toString(),
+        document: {
+          id: document.document_id.toString(),
+          title: document.title,
+          category: document.category,
+          uploaded_at: document.uploaded_at,
+        },
+      });
       return true;
     } catch (error) {
-      this.logger.error(`Index notification error: ${error.message}`);
+      this.logger.error(`Error indexing document: ${error.message}`);
       return false;
     }
   }
 
-  // Phương thức để xóa một thông báo khỏi chỉ mục
-  async removeNotificationFromIndex(id: number): Promise<boolean> {
-    if (!this.isConnected) {
-      return false;
-    }
-    
+  // Search documents
+  async searchDocuments(query: string, limit = 10) {
     try {
-      await this.esService.delete({
-        index: `${this.indexPrefix}_notifications`,
-        id: id.toString()
+      const response = await this.esService.search({
+        index: this.indices.documents,
+        body: {
+          size: limit,
+          query: {
+            multi_match: {
+              query,
+              fields: ['title^3', 'category^2'],
+              fuzziness: 'AUTO',
+            },
+          },
+          sort: [
+            { uploaded_at: { order: 'desc' } },
+          ],
+        },
       });
-      
+
+      if (response.hits.total.value === 0) {
+        return [];
+      }
+
+      return response.hits.hits.map(hit => ({
+        id: hit._id,
+        ...hit._source,
+      }));
+    } catch (error) {
+      this.logger.error(`Error searching documents: ${error.message}`);
+      return [];
+    }
+  }
+
+  // Index a forum post
+  async indexForumPost(post: any) {
+    try {
+      await this.esService.index({
+        index: this.indices.forum_posts,
+        id: post.post_id.toString(),
+        document: {
+          id: post.post_id.toString(),
+          title: post.title,
+          content: post.content,
+          created_at: post.created_at,
+          updated_at: post.updated_at,
+        },
+      });
       return true;
     } catch (error) {
-      this.logger.error(`Remove notification from index error: ${error.message}`);
+      this.logger.error(`Error indexing forum post: ${error.message}`);
       return false;
     }
   }
 
-  // Phương thức mới để lấy thống kê tài liệu
-  async getDocumentStatistics(): Promise<any> {
-    if (!this.isConnected) {
-      return {
-        totalDocuments: 0,
-        categoriesCount: [],
-        recentUploads: []
-      };
-    }
-    
+  // Get document categories with count
+  async getDocumentCategories() {
     try {
-      // Lấy tổng số tài liệu
-      const countResponse = await this.esService.count({
-        index: `${this.indexPrefix}_documents`
-      });
-      
-      // Lấy thống kê theo category
-      const categoryResponse = await this.esService.search({
-        index: `${this.indexPrefix}_documents`,
+      const response = await this.esService.search({
+        index: this.indices.documents,
         body: {
           size: 0,
           aggs: {
             categories: {
               terms: {
-                field: 'category.keyword',
-                size: 10
-              }
-            }
-          }
-        }
+                field: 'category',
+                size: 10,
+              },
+            },
+          },
+        },
       });
-      
-      // Lấy các tài liệu gần đây
-      const recentResponse = await this.esService.search({
-        index: `${this.indexPrefix}_documents`,
-        body: {
-          size: 5,
-          sort: [
-            { uploaded_at: { order: 'desc' } }
-          ]
-        }
-      });
-      
-      // Xử lý kết quả truy vấn
-      const total = countResponse.count;
-      
-      // Xử lý kết quả thống kê theo danh mục
-      let categoriesCount = [];
-      if (categoryResponse.aggregations && 
-          categoryResponse.aggregations.categories && 
-          categoryResponse.aggregations.categories.buckets) {
-        categoriesCount = categoryResponse.aggregations.categories.buckets.map(bucket => ({
-          category: bucket.key,
-          count: bucket.doc_count
-        }));
+
+      if (!response.aggregations) {
+        return [];
       }
+
+      const categories = response.aggregations.categories;
+      const buckets = 'buckets' in categories ? categories.buckets : [];
       
-      // Xử lý kết quả tài liệu gần đây
-      const recentHits = recentResponse.hits?.hits || [];
-      const recentUploads = recentHits.map(hit => ({
-        id: hit._id,
-        ...hit._source
+      return buckets.map((bucket: any) => ({
+        category: bucket.key,
+        count: bucket.doc_count,
       }));
-      
-      return {
-        totalDocuments: total,
-        categoriesCount,
-        recentUploads
-      };
     } catch (error) {
-      this.logger.error(`Get document statistics error: ${error.message}`);
-      return {
-        totalDocuments: 0,
-        categoriesCount: [],
-        recentUploads: []
-      };
+      this.logger.error(`Error getting document categories: ${error.message}`);
+      return [];
+    }
+  }
+
+  // Recent document uploads
+  async getRecentDocuments(limit = 5) {
+    try {
+      const response = await this.esService.search({
+        index: this.indices.documents,
+        body: {
+          size: limit,
+          sort: [
+            { uploaded_at: { order: 'desc' } },
+          ],
+        },
+      });
+
+      if (response.hits.total.value === 0) {
+        return [];
+      }
+
+      return response.hits.hits.map(hit => ({
+        id: hit._id,
+        ...hit._source,
+      }));
+    } catch (error) {
+      this.logger.error(`Error getting recent documents: ${error.message}`);
+      return [];
     }
   }
 }

@@ -1,9 +1,8 @@
 // src/dashboard/dashboard.module.ts
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { DashboardService } from './dashboard.service';
 import { DashboardController } from './dashboard.controller';
-import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../entities/user.entity';
 import { Task } from '../entities/task.entity';
 import { Attendance } from '../entities/attendance.entity';
@@ -11,6 +10,7 @@ import { UserCourse } from '../entities/user-course.entity';
 import { Course } from '../entities/course.entity';
 import { ForumPost } from '../entities/forum-post.entity';
 import { AppElasticsearchModule } from '../elasticsearch/elasticsearch.module';
+import { CacheModule } from '@nestjs/cache-manager';
 
 @Module({
   imports: [
@@ -23,9 +23,9 @@ import { AppElasticsearchModule } from '../elasticsearch/elasticsearch.module';
       ForumPost,
     ]),
     AppElasticsearchModule,
+    CacheModule,
   ],
-  controllers: [DashboardController],
   providers: [DashboardService],
-  exports: [DashboardService],
+  controllers: [DashboardController],
 })
 export class DashboardModule {}

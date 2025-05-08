@@ -1,18 +1,21 @@
 // src/dashboard/dashboard.service.ts
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull, Between } from 'typeorm';
+import { Repository, Not, IsNull, Between, LessThan, In } from 'typeorm';
 import { User } from '../entities/user.entity';
-import { Task } from '../entities/task.entity';
+import { Task, TaskStatus } from '../entities/task.entity';
 import { Attendance } from '../entities/attendance.entity';
-import { UserCourse } from '../entities/user-course.entity';
+import { UserCourse, CourseStatus } from '../entities/user-course.entity';
 import { Course } from '../entities/course.entity';
 import { ForumPost } from '../entities/forum-post.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
 
 @Injectable()
 export class DashboardService {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
@@ -33,6 +36,7 @@ export class DashboardService {
     private forumPostsRepository: Repository<ForumPost>,
     
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private elasticsearchService: ElasticsearchService,
   ) {}
 
   async getStats() {
@@ -159,7 +163,7 @@ export class DashboardService {
     const averageScore = await this.userCoursesRepository
       .createQueryBuilder('userCourse')
       .select('AVG(userCourse.score)', 'average')
-      .where('userCourse.status = :status', { status: 'Completed' })
+      .where('userCourse.status = :status', { status: CourseStatus.COMPLETED })
       .andWhere('userCourse.score IS NOT NULL')
       .getRawOne();
     
@@ -175,48 +179,63 @@ export class DashboardService {
     return stats;
   }
   
+  // Advanced dashboard method leveraging Elasticsearch
+  async getEnhancedDashboard() {
+    try {
+      // Get data from various sources
+      const baseStats = await this.getStats();
+      const attendanceStats = await this.getAttendanceStats();
+      const trainingStats = await this.getTrainingStats();
+      
+      // Get upcoming tasks from Elasticsearch
+      const upcomingTasks = await this.elasticsearchService.getUpcomingTasks(5);
+      
+      // Get document categories from Elasticsearch
+      const documentCategories = await this.elasticsearchService.getDocumentCategories();
+      
+      // Get recent documents from Elasticsearch
+      const recentDocuments = await this.elasticsearchService.getRecentDocuments(5);
+      
+      // Combine all data
+      return {
+        totalUsers: baseStats.totalUsers,
+        checkInsToday: attendanceStats.checkInsToday,
+        pendingLeaves: attendanceStats.pendingLeaves,
+        activeCourses: trainingStats.activeCourses,
+        courseRegistrationByStatus: trainingStats.courseRegistrationByStatus,
+        upcomingTasks,
+        documentCategories,
+        recentDocuments,
+        usersByRole: baseStats.usersByRole,
+        tasksByStatus: baseStats.tasksByStatus,
+      };
+    } catch (error) {
+      this.logger.error(`Error getting enhanced dashboard: ${error.message}`);
+      
+      // Return basic dashboard if we encounter any errors with Elasticsearch
+      const baseStats = await this.getStats();
+      const attendanceStats = await this.getAttendanceStats();
+      const trainingStats = await this.getTrainingStats();
+      
+      return {
+        totalUsers: baseStats.totalUsers,
+        checkInsToday: attendanceStats.checkInsToday,
+        pendingLeaves: attendanceStats.pendingLeaves,
+        activeCourses: trainingStats.activeCourses,
+        courseRegistrationByStatus: trainingStats.courseRegistrationByStatus,
+        upcomingTasks: [],
+        documentCategories: [],
+        recentDocuments: [],
+        usersByRole: baseStats.usersByRole,
+        tasksByStatus: baseStats.tasksByStatus,
+      };
+    }
+  }
+  
   // Phương thức để xóa cache khi cần
   async invalidateDashboardCache() {
     await this.cacheManager.del('dashboard_stats');
     await this.cacheManager.del('attendance_stats');
     await this.cacheManager.del('training_stats');
-    
-    // Thông báo đã xóa cache
-    return {
-      message: 'Dashboard caches have been invalidated. Stats will be recalculated on next access.',
-      timestamp: new Date()
-    };
-  }
-  
-  // Thêm phương thức tổng hợp thống kê
-  async getDashboardOverview() {
-    // Lấy dữ liệu từ các phương thức có sẵn
-    const generalStats = await this.getStats();
-    const attendanceStats = await this.getAttendanceStats();
-    const trainingStats = await this.getTrainingStats();
-    
-    // Truy vấn các deadline sắp tới
-    const today = new Date();
-    const nextWeek = new Date(today);
-    nextWeek.setDate(today.getDate() + 7);
-    
-    const upcomingDeadlines = await this.tasksRepository.count({
-      where: {
-        deadline: Between(today, nextWeek),
-        status: Not(In(['Completed', 'Rejected']))
-      }
-    });
-    
-    // Kết hợp thống kê - đảm bảo truy cập thuộc tính an toàn
-    const overview = {
-      totalUsers: generalStats?.totalUsers || 0,
-      checkInsToday: attendanceStats?.checkInsToday || 0,
-      pendingLeaves: attendanceStats?.pendingLeaves || 0,
-      activeCourses: trainingStats?.activeCourses || 0,
-      courseRegistrationByStatus: trainingStats?.courseRegistrationByStatus || [],
-      upcomingDeadlines: upcomingDeadlines || 0
-    };
-    
-    return overview;
   }
 }

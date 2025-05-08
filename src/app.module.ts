@@ -23,7 +23,8 @@ import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
 import { DatabaseService } from './database/database.service';
-import helmet from 'helmet'; // Sửa lỗi import
+import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -126,6 +127,7 @@ import helmet from 'helmet'; // Sửa lỗi import
       },
       inject: [ConfigService],
     }),
+    AppElasticsearchModule,
     AuthModule,
     UsersModule,
     TrainingModule,
@@ -140,6 +142,7 @@ import helmet from 'helmet'; // Sửa lỗi import
     SeedModule,
     SharedModule,
     ProfilesModule,
+    DashboardModule,
   ],
   controllers: [AppController, DatabaseController],
   providers: [AppService, DatabaseService],
