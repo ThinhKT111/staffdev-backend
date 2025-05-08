@@ -1,7 +1,7 @@
 // src/documents/documents.service.ts
 import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Document } from '../entities/document.entity';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
@@ -10,6 +10,8 @@ import { GenerateDocumentDto } from './dto/generate-document.dto';
 import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as pdfParse from 'pdf-parse';
+import * as mammoth from 'mammoth';
 
 @Injectable()
 export class DocumentsService {
@@ -23,83 +25,82 @@ export class DocumentsService {
   ) {}
 
   async findAll(): Promise<Document[]> {
+    const documents = await this.documentsRepository.find({
+      relations: ['uploader'],
+      order: { uploaded_at: 'DESC' },
+    });
+    
+    return documents;
+  }
+
+  async searchDocuments(query: string, category?: string): Promise<Document[]> {
     try {
-      return await this.documentsRepository.find({
-        relations: ['uploader'],
-        order: { uploaded_at: 'DESC' },
-      });
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
+        // Search using Elasticsearch
+        const searchResult = await this.elasticsearchService.searchDocuments(query, category);
+        
+        if (searchResult.results.length > 0) {
+          // Get IDs from search results
+          const documentIds = searchResult.results.map(doc => parseInt(doc.document_id));
+          
+          // Get full documents from database
+          const documents = await this.documentsRepository.find({
+            where: { document_id: In(documentIds) },
+            relations: ['uploader'],
+          });
+          
+          // Sort by search result order
+          return documentIds.map(id => 
+            documents.find(doc => doc.document_id === id)
+          ).filter(Boolean);
+        }
+      }
+      
+      // Fallback: Simple database search
+      let queryBuilder = this.documentsRepository.createQueryBuilder('document')
+        .leftJoinAndSelect('document.uploader', 'uploader')
+        .where('document.title ILIKE :query', { query: `%${query}%` });
+      
+      if (category) {
+        queryBuilder = queryBuilder.andWhere('document.category = :category', { category });
+      }
+      
+      return queryBuilder
+        .orderBy('document.uploaded_at', 'DESC')
+        .getMany();
     } catch (error) {
-      this.logger.error(`Error fetching all documents: ${error.message}`);
+      this.logger.error(`Error searching documents: ${error.message}`);
       return [];
     }
   }
 
   async findByCategory(category: string): Promise<Document[]> {
-    try {
-      // Check if Elasticsearch is available for enhanced search
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        try {
-          const esResult = await this.elasticsearchService.searchDocuments(`category:${category}`);
-          if (esResult.hits.length > 0) {
-            // Get document IDs from Elasticsearch
-            const docIds = esResult.hits.map(hit => hit.document_id);
-            
-            // Fetch complete documents from database
-            return await this.documentsRepository.find({
-              where: { document_id: In(documentIds) },
-              relations: ['uploader'],
-              order: { uploaded_at: 'DESC' },
-            });
-          }
-        } catch (error) {
-          this.logger.error(`Elasticsearch search failed, falling back to database: ${error.message}`);
-        }
-      }
-      
-      // Fallback to database search
-      return await this.documentsRepository.find({
-        where: { category },
-        relations: ['uploader'],
-        order: { uploaded_at: 'DESC' },
-      });
-    } catch (error) {
-      this.logger.error(`Error fetching documents by category: ${error.message}`);
-      return [];
-    }
+    return this.documentsRepository.find({
+      where: { category },
+      relations: ['uploader'],
+      order: { uploaded_at: 'DESC' },
+    });
   }
 
   async findOne(id: number): Promise<Document> {
-    try {
-      const document = await this.documentsRepository.findOne({
-        where: { document_id: id },
-        relations: ['uploader'],
-      });
-      
-      if (!document) {
-        throw new NotFoundException(`Document with ID ${id} not found`);
-      }
-      
-      return document;
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      this.logger.error(`Error fetching document ${id}: ${error.message}`);
-      throw new NotFoundException(`Error fetching document ${id}`);
+    const document = await this.documentsRepository.findOne({
+      where: { document_id: id },
+      relations: ['uploader'],
+    });
+    
+    if (!document) {
+      throw new NotFoundException(`Document with ID ${id} not found`);
     }
+    
+    return document;
   }
 
   async findTemplates(): Promise<Document[]> {
-    try {
-      return await this.documentsRepository.find({
-        where: { category: 'Template' },
-        relations: ['uploader'],
-        order: { uploaded_at: 'DESC' },
-      });
-    } catch (error) {
-      this.logger.error(`Error fetching templates: ${error.message}`);
-      return [];
-    }
+    return this.documentsRepository.find({
+      where: { category: 'Template' },
+      relations: ['uploader'],
+      order: { uploaded_at: 'DESC' },
+    });
   }
 
   async generateFromTemplate(
@@ -107,208 +108,161 @@ export class DocumentsService {
     generateDto: GenerateDocumentDto,
     userId: number
   ): Promise<Document> {
-    try {
-      // Find template
-      const template = await this.findOne(templateId);
-      
-      // Check if it's a template
-      if (template.category !== 'Template') {
-        throw new BadRequestException('This document is not a template');
-      }
-      
-      // Create new document name
-      const newTitle = generateDto.title || `${template.title} - Generated ${new Date().toLocaleString()}`;
-      
-      // Create new document from template
-      const newDocument = this.documentsRepository.create({
-        title: newTitle,
-        file_url: template.file_url, // Use same file as template
-        category: generateDto.category || 'Generated',
-        uploaded_by: userId,
-        uploaded_at: new Date(),
-      });
-      
-      const savedDocument = await this.documentsRepository.save(newDocument);
-      
-      // Index in Elasticsearch if available
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        try {
-          // Try to read file content for indexing
-          const uploadDir = process.env.UPLOAD_DIR || 'uploads';
-          const filePath = path.join(process.cwd(), uploadDir, template.file_url);
-          
-          if (fs.existsSync(filePath)) {
-            const fileContent = fs.readFileSync(filePath, 'utf8');
-            await this.elasticsearchService.indexDocument(savedDocument, fileContent);
-          } else {
-            await this.elasticsearchService.indexDocument(savedDocument);
-          }
-        } catch (error) {
-          this.logger.error(`Error indexing generated document: ${error.message}`);
-        }
-      }
-      
-      return savedDocument;
-    } catch (error) {
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
-        throw error;
-      }
-      this.logger.error(`Error generating document from template: ${error.message}`);
-      throw new BadRequestException('Error generating document from template');
+    // Tìm template
+    const template = await this.findOne(templateId);
+    
+    // Kiểm tra xem có phải là template không
+    if (template.category !== 'Template') {
+      throw new BadRequestException('Tài liệu này không phải là mẫu');
     }
+    
+    // Tạo tên tài liệu mới
+    const newTitle = generateDto.title || `${template.title} - Generated ${new Date().toLocaleString()}`;
+    
+    // Tạo tài liệu mới từ template
+    const newDocument = this.documentsRepository.create({
+      title: newTitle,
+      file_url: template.file_url, // Cùng sử dụng file như template
+      category: generateDto.category || 'Generated',
+      uploaded_by: userId,
+      uploaded_at: new Date(),
+    });
+    
+    const savedDocument = await this.documentsRepository.save(newDocument);
+    
+    // Index document vào Elasticsearch
+    if (this.elasticsearchService.getElasticsearchAvailability()) {
+      await this.indexDocumentContent(savedDocument);
+    }
+    
+    return savedDocument;
   }
 
   async create(createDocumentDto: CreateDocumentDto, file: Express.Multer.File): Promise<Document> {
-    try {
-      // Save file to disk
-      const filePath = await this.fileUploadService.saveFile(file, 'documents');
-      
-      // Create document record
-      const document = this.documentsRepository.create({
-        title: createDocumentDto.title,
-        file_url: filePath,
-        category: createDocumentDto.category,
-        uploaded_by: createDocumentDto.uploadedBy,
-        uploaded_at: new Date(),
-      });
-      
-      const savedDocument = await this.documentsRepository.save(document);
-      
-      // Index in Elasticsearch if available
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        try {
-          // Try to extract text for indexing
-          let fileContent = '';
-          
-          // Basic text extraction based on file type
-          if (file.mimetype.includes('text/')) {
-            fileContent = file.buffer.toString('utf8');
-          }
-          
-          await this.elasticsearchService.indexDocument(savedDocument, fileContent);
-        } catch (error) {
-          this.logger.error(`Error indexing document: ${error.message}`);
-        }
-      }
-      
-      return savedDocument;
-    } catch (error) {
-      this.logger.error(`Error creating document: ${error.message}`);
-      throw new BadRequestException('Error creating document');
+    // Save file to disk
+    const filePath = await this.fileUploadService.saveFile(file, 'documents');
+    
+    // Create document record
+    const document = this.documentsRepository.create({
+      title: createDocumentDto.title,
+      file_url: filePath,
+      category: createDocumentDto.category,
+      uploaded_by: createDocumentDto.uploadedBy,
+      uploaded_at: new Date(),
+    });
+    
+    const savedDocument = await this.documentsRepository.save(document);
+    
+    // Extract and index document content if Elasticsearch is available
+    if (this.elasticsearchService.getElasticsearchAvailability()) {
+      await this.indexDocumentContent(savedDocument, file);
     }
+    
+    return savedDocument;
   }
 
   async update(id: number, updateDocumentDto: UpdateDocumentDto): Promise<Document> {
-    try {
-      const document = await this.findOne(id);
-      
-      // Update document
-      const updatedDocument = {
-        ...document,
-        title: updateDocumentDto.title || document.title,
-        category: updateDocumentDto.category || document.category,
-      };
-      
-      const savedDocument = await this.documentsRepository.save(updatedDocument);
-      
-      // Update in Elasticsearch if available
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        try {
-          await this.elasticsearchService.indexDocument(savedDocument);
-        } catch (error) {
-          this.logger.error(`Error updating document in Elasticsearch: ${error.message}`);
-        }
-      }
-      
-      return savedDocument;
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      this.logger.error(`Error updating document ${id}: ${error.message}`);
-      throw new BadRequestException('Error updating document');
+    const document = await this.findOne(id);
+    
+    // Update document
+    const updatedDocument = {
+      ...document,
+      title: updateDocumentDto.title || document.title,
+      category: updateDocumentDto.category || document.category,
+    };
+    
+    const savedDocument = await this.documentsRepository.save(updatedDocument);
+    
+    // Update document in Elasticsearch
+    if (this.elasticsearchService.getElasticsearchAvailability()) {
+      await this.indexDocumentContent(savedDocument);
     }
+    
+    return savedDocument;
   }
 
   async remove(id: number): Promise<void> {
-    try {
-      const document = await this.findOne(id);
-      
-      // Remove file from disk
-      await this.fileUploadService.removeFile(document.file_url);
-      
-      // Remove document record
-      await this.documentsRepository.remove(document);
-      
-      // Remove from Elasticsearch if available
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        try {
-          await this.elasticsearchService.removeDocumentFromIndex(id);
-        } catch (error) {
-          this.logger.error(`Error removing document from Elasticsearch: ${error.message}`);
-        }
-      }
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      this.logger.error(`Error removing document ${id}: ${error.message}`);
-      throw new BadRequestException('Error removing document');
+    const document = await this.findOne(id);
+    
+    // Remove file from disk
+    await this.fileUploadService.removeFile(document.file_url);
+    
+    // Remove document from Elasticsearch
+    if (this.elasticsearchService.getElasticsearchAvailability()) {
+      await this.elasticsearchService.removeDocumentFromIndex(document.document_id);
     }
+    
+    // Remove document record
+    await this.documentsRepository.remove(document);
   }
 
   async getCategories(): Promise<string[]> {
-    try {
-      const result = await this.documentsRepository
-        .createQueryBuilder('document')
-        .select('DISTINCT document.category', 'category')
-        .getRawMany();
-      
-      return result.map(item => item.category);
-    } catch (error) {
-      this.logger.error(`Error fetching categories: ${error.message}`);
-      return [];
+    // Try to get categories from Elasticsearch for better performance
+    if (this.elasticsearchService.getElasticsearchAvailability()) {
+      const categories = await this.elasticsearchService.getDocumentCategories();
+      if (categories.length > 0) {
+        return categories;
+      }
     }
+    
+    // Fallback to database
+    const result = await this.documentsRepository
+      .createQueryBuilder('document')
+      .select('DISTINCT document.category', 'category')
+      .getRawMany();
+    
+    return result.map(item => item.category);
   }
   
-  async searchDocuments(query: string): Promise<Document[]> {
+  // Helper method to extract content from a document file and index it
+  private async indexDocumentContent(document: Document, file?: Express.Multer.File): Promise<void> {
     try {
-      // Use Elasticsearch if available
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
-        try {
-          const searchResults = await this.elasticsearchService.searchDocuments(query);
-          
-          if (searchResults.hits.length > 0) {
-            // Get document IDs from search results
-            const documentIds = searchResults.hits.map(hit => hit.document_id);
-            
-            // Fetch complete document records from database
-            const documents = await this.documentsRepository.find({
-              where: { document_id: In(documentIds) },
-              relations: ['uploader'],
-            });
-            
-            // Sort documents based on Elasticsearch score order
-            return documentIds.map(id => documents.find(doc => doc.document_id === id))
-              .filter(doc => doc !== undefined) as Document[];
-          }
-        } catch (error) {
-          this.logger.error(`Elasticsearch search failed, falling back to database: ${error.message}`);
+      let fileContent = '';
+      const uploadDir = process.env.UPLOAD_DIR || 'uploads';
+      let fileBuffer: Buffer;
+      
+      if (file) {
+        // Use the buffer from the uploaded file
+        fileBuffer = file.buffer;
+      } else {
+        // Read file from disk
+        const filePath = path.join(process.cwd(), uploadDir, document.file_url);
+        if (!fs.existsSync(filePath)) {
+          this.logger.warn(`File not found for document ${document.document_id}: ${filePath}`);
+          return;
         }
+        fileBuffer = fs.readFileSync(filePath);
       }
       
-      // Fallback to database search
-      return await this.documentsRepository
-        .createQueryBuilder('document')
-        .leftJoinAndSelect('document.uploader', 'uploader')
-        .where('document.title ILIKE :query OR document.category ILIKE :query', {
-          query: `%${query}%`
-        })
-        .orderBy('document.uploaded_at', 'DESC')
-        .getMany();
+      const fileExtension = path.extname(document.file_url).toLowerCase();
+      
+      // Extract text based on file type
+      if (fileExtension === '.pdf') {
+        const pdfData = await pdfParse(fileBuffer);
+        fileContent = pdfData.text;
+      } else if (fileExtension === '.docx') {
+        const result = await mammoth.extractRawText({ buffer: fileBuffer });
+        fileContent = result.value;
+      } else if (fileExtension === '.txt') {
+        fileContent = fileBuffer.toString('utf8');
+      } else {
+        // Skip unknown formats
+        this.logger.warn(`Unsupported file format for indexing: ${fileExtension}`);
+      }
+      
+      // Index the document with its content
+      const documentWithUser = await this.documentsRepository.findOne({
+        where: { document_id: document.document_id },
+        relations: ['uploader'],
+      });
+      
+      await this.elasticsearchService.indexDocument({
+        ...documentWithUser,
+        content: fileContent
+      });
+      
     } catch (error) {
-      this.logger.error(`Error searching documents: ${error.message}`);
-      return [];
+      this.logger.error(`Error indexing document content: ${error.message}`);
     }
   }
 }

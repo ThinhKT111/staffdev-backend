@@ -6,20 +6,25 @@ import { setupSwagger } from './swagger.config';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as compression from 'compression';
 import * as helmet from 'helmet';
 
 async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule);
     
-    // Check if uploads directory exists
+    // Áp dụng middleware bảo mật
+    app.use(compression()); // Nén dữ liệu
+    app.use(helmet()); // Bảo mật headers
+    
+    // Kiểm tra thư mục uploads tồn tại chưa
     const uploadsDir = process.env.UPLOAD_DIR || 'uploads';
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
       console.log(`Created uploads directory: ${uploadsDir}`);
     }
     
-    // Create subdirectories in uploads
+    // Tạo thư mục con trong uploads
     const subDirs = ['documents', 'avatars', 'reports'];
     for (const dir of subDirs) {
       const fullPath = path.join(uploadsDir, dir);
@@ -39,11 +44,12 @@ async function bootstrap() {
     // Apply global exception filter
     app.useGlobalFilters(new HttpExceptionFilter());
     
-    // Use helmet for security headers
-    app.use(helmet.default());
-    
     // Enable CORS
-    app.enableCors();
+    app.enableCors({
+      origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      credentials: true,
+    });
     
     // Set global prefix
     app.setGlobalPrefix('api');
@@ -59,7 +65,7 @@ async function bootstrap() {
   } catch (error) {
     console.error('Error starting the application:', error);
     
-    // Check if error is related to database
+    // Kiểm tra xem có phải lỗi liên quan đến database không
     if (error.message && error.message.includes('database')) {
       console.log('\n---------------------------------------------');
       console.log('DATABASE CONNECTION ERROR');

@@ -12,7 +12,6 @@ import { NotificationEvents } from './dto/notification-event.dto';
 import { QueueService } from '../shared/services/queue.service';
 import { UnreadCounterService } from './services/unread-counter.service';
 import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
-import { Cron, CronExpression } from '@nestjs/schedule';
 
 interface NotificationJobData {
   userId: number;
@@ -31,7 +30,6 @@ interface BulkNotificationJobData {
 @Injectable()
 export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
-  private isElasticsearchAvailable = false;
 
   constructor(
     @InjectRepository(Notification)
@@ -41,61 +39,13 @@ export class NotificationsService implements OnModuleInit {
     private webSocketClient: WebSocketClient,
     private queueService: QueueService,
     private unreadCounterService: UnreadCounterService,
-    private elasticsearchService: ElasticsearchService,
+    private elasticsearchService: ElasticsearchService
   ) {}
   
   // Khởi động worker khi service được khởi tạo
-  async onModuleInit() {
+  onModuleInit() {
     this.queueService.startWorker('notification', this.processNotification.bind(this));
     this.queueService.startWorker('bulk_notification', this.processBulkNotification.bind(this));
-    
-    // Kiểm tra Elasticsearch có khả dụng không
-    try {
-      await this.elasticsearchService.checkHealth().available;
-      this.isElasticsearchAvailable = true;
-      this.logger.log('Elasticsearch khả dụng cho NotificationsService');
-      
-      // Đồng bộ dữ liệu notifications vào Elasticsearch
-      this.syncNotificationsToElasticsearch();
-    } catch (error) {
-      this.isElasticsearchAvailable = false;
-      this.logger.warn('Elasticsearch không khả dụng cho NotificationsService');
-    }
-  }
-
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
-  async syncNotificationsToElasticsearch() {
-    if (!this.isElasticsearchAvailable) {
-      this.logger.warn('Elasticsearch không khả dụng. Bỏ qua đồng bộ dữ liệu thông báo.');
-      return;
-    }
-
-    try {
-      this.logger.log('Bắt đầu đồng bộ dữ liệu thông báo với Elasticsearch...');
-      
-      // Lấy tất cả thông báo từ database
-      const notifications = await this.notificationRepository.find();
-      
-      for (const notification of notifications) {
-        // Chuẩn bị dữ liệu cho Elasticsearch
-        const esNotification = {
-          notification_id: notification.notification_id,
-          user_id: notification.user_id,
-          title: notification.title,
-          content: notification.content,
-          type: notification.type,
-          is_read: notification.is_read,
-          created_at: notification.created_at,
-        };
-        
-        // Index vào Elasticsearch
-        await this.elasticsearchService.indexNotification(esNotification);
-      }
-      
-      this.logger.log(`Đã đồng bộ ${notifications.length} thông báo vào Elasticsearch`);
-    } catch (error) {
-      this.logger.error(`Lỗi khi đồng bộ dữ liệu thông báo: ${error.message}`);
-    }
   }
 
   // Xử lý thông báo từ queue
@@ -115,6 +65,17 @@ export class NotificationsService implements OnModuleInit {
       
       const savedNotification = await this.notificationRepository.save(notification);
       
+      // Lấy thông báo với user relation để ElasticSearch sử dụng
+      const notificationWithUser = await this.notificationRepository.findOne({
+        where: { notification_id: savedNotification.notification_id },
+        relations: ['user']
+      });
+      
+      // Index vào ElasticSearch nếu có thể
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
+        await this.elasticsearchService.indexNotification(notificationWithUser);
+      }
+      
       // Tăng counter thông báo chưa đọc
       const unreadCount = await this.unreadCounterService.increment(userId);
       
@@ -127,25 +88,6 @@ export class NotificationsService implements OnModuleInit {
           unreadCount,
         }
       );
-      
-      // Nếu Elasticsearch khả dụng, index notification
-      if (this.isElasticsearchAvailable) {
-        try {
-          const esNotification = {
-            notification_id: savedNotification.notification_id,
-            user_id: savedNotification.user_id,
-            title: savedNotification.title,
-            content: savedNotification.content,
-            type: savedNotification.type,
-            is_read: savedNotification.is_read,
-            created_at: savedNotification.created_at,
-          };
-          
-          await this.elasticsearchService.indexNotification(esNotification);
-        } catch (error) {
-          this.logger.error(`Lỗi khi index thông báo vào Elasticsearch: ${error.message}`);
-        }
-      }
       
       return savedNotification;
     } catch (error) {
@@ -181,204 +123,144 @@ export class NotificationsService implements OnModuleInit {
   }
 
   async findAll(): Promise<Notification[]> {
-    try {
-      return this.notificationRepository.find({
-        relations: ['user'],
-        order: { created_at: 'DESC' },
-      });
-    } catch (error) {
-      this.logger.error(`Lỗi khi lấy tất cả thông báo: ${error.message}`);
-      return [];
-    }
+    return this.notificationRepository.find({
+      relations: ['user'],
+      order: { created_at: 'DESC' },
+    });
   }
 
   async findByUser(userId: number, limit?: number): Promise<Notification[]> {
-    try {
-      const queryBuilder = this.notificationRepository.createQueryBuilder('notification')
-        .where('notification.user_id = :userId', { userId })
-        .orderBy('notification.created_at', 'DESC');
-      
-      if (limit) {
-        queryBuilder.limit(limit);
-      }
-      
-      return queryBuilder.getMany();
-    } catch (error) {
-      this.logger.error(`Lỗi khi lấy thông báo của người dùng ${userId}: ${error.message}`);
-      return [];
+    const queryBuilder = this.notificationRepository.createQueryBuilder('notification')
+      .where('notification.user_id = :userId', { userId })
+      .orderBy('notification.created_at', 'DESC');
+    
+    if (limit) {
+      queryBuilder.limit(limit);
     }
+    
+    return queryBuilder.getMany();
   }
 
   async findOne(id: number): Promise<Notification> {
-    try {
-      const notification = await this.notificationRepository.findOne({
-        where: { notification_id: id },
-        relations: ['user'],
-      });
-      
-      if (!notification) {
-        throw new NotFoundException(`Notification with ID ${id} not found`);
-      }
-      
-      return notification;
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      this.logger.error(`Lỗi khi lấy thông báo ${id}: ${error.message}`);
-      throw new NotFoundException(`Error fetching notification ${id}`);
+    const notification = await this.notificationRepository.findOne({
+      where: { notification_id: id },
+      relations: ['user'],
+    });
+    
+    if (!notification) {
+      throw new NotFoundException(`Notification with ID ${id} not found`);
     }
+    
+    return notification;
   }
  
   // Sửa đổi phương thức create để sử dụng queue
   async create(createNotificationDto: CreateNotificationDto): Promise<any> {
-    try {
-      const jobId = await this.queueService.enqueue<NotificationJobData>('notification', {
-        userId: createNotificationDto.userId,
-        title: createNotificationDto.title,
-        content: createNotificationDto.content,
-        type: createNotificationDto.type,
-      });
-      
-      return {
-        message: 'Notification has been enqueued',
-        jobId,
-      };
-    } catch (error) {
-      this.logger.error(`Lỗi khi tạo thông báo: ${error.message}`);
-      throw error;
-    }
+    const jobId = await this.queueService.enqueue<NotificationJobData>('notification', {
+      userId: createNotificationDto.userId,
+      title: createNotificationDto.title,
+      content: createNotificationDto.content,
+      type: createNotificationDto.type,
+    });
+    
+    return {
+      message: 'Notification has been enqueued',
+      jobId,
+    };
   }
  
   // Sửa đổi phương thức tạo thông báo hàng loạt
   async createBulk(bulkCreateDto: BulkCreateNotificationDto): Promise<any> {
-    try {
-      const jobId = await this.queueService.enqueue<BulkNotificationJobData>('bulk_notification', {
-        userIds: bulkCreateDto.userIds,
-        title: bulkCreateDto.title,
-        content: bulkCreateDto.content,
-        type: bulkCreateDto.type,
-      });
-      
-      return {
-        message: `Bulk notifications for ${bulkCreateDto.userIds.length} users have been enqueued`,
-        jobId,
-      };
-    } catch (error) {
-      this.logger.error(`Lỗi khi tạo thông báo hàng loạt: ${error.message}`);
-      throw error;
-    }
+    const jobId = await this.queueService.enqueue<BulkNotificationJobData>('bulk_notification', {
+      userIds: bulkCreateDto.userIds,
+      title: bulkCreateDto.title,
+      content: bulkCreateDto.content,
+      type: bulkCreateDto.type,
+    });
+    
+    return {
+      message: `Bulk notifications for ${bulkCreateDto.userIds.length} users have been enqueued`,
+      jobId,
+    };
   }
  
   async markAsRead(id: number, markAsReadDto: MarkAsReadDto): Promise<Notification> {
-    try {
-      const notification = await this.findOne(id);
+    const notification = await this.findOne(id);
+    
+    // Nếu đang chưa đọc và bây giờ đánh dấu đã đọc
+    if (!notification.is_read && markAsReadDto.isRead !== false) {
+      // Giảm counter
+      const unreadCount = await this.unreadCounterService.decrement(notification.user_id);
       
-      // Nếu đang chưa đọc và bây giờ đánh dấu đã đọc
-      if (!notification.is_read && markAsReadDto.isRead !== false) {
-        // Giảm counter
-        const unreadCount = await this.unreadCounterService.decrement(notification.user_id);
-        
-        // Thông báo qua WebSocket
-        this.webSocketClient.sendToUser(
-          notification.user_id,
-          NotificationEvents.UNREAD_COUNT,
-          { unreadCount }
-        );
-      }
-      
-      notification.is_read = markAsReadDto.isRead !== undefined ? markAsReadDto.isRead : true;
-      
-      const savedNotification = await this.notificationRepository.save(notification);
-      
-      // Nếu Elasticsearch khả dụng, update notification
-      if (this.isElasticsearchAvailable) {
-        try {
-          const esNotification = {
-            notification_id: savedNotification.notification_id,
-            is_read: savedNotification.is_read,
-          };
-          
-          await this.elasticsearchService.updateNotification(esNotification);
-        } catch (error) {
-          this.logger.error(`Lỗi khi update thông báo trong Elasticsearch: ${error.message}`);
-        }
-      }
-      
-      return savedNotification;
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      this.logger.error(`Lỗi khi đánh dấu đã đọc thông báo ${id}: ${error.message}`);
-      throw error;
+      // Thông báo qua WebSocket
+      this.webSocketClient.sendToUser(
+        notification.user_id,
+        NotificationEvents.UNREAD_COUNT,
+        { unreadCount }
+      );
     }
+    
+    notification.is_read = markAsReadDto.isRead !== undefined ? markAsReadDto.isRead : true;
+    
+    const updatedNotification = await this.notificationRepository.save(notification);
+    
+    // Cập nhật Elasticsearch
+    if (this.elasticsearchService.getElasticsearchAvailability()) {
+      await this.elasticsearchService.indexNotification(updatedNotification);
+    }
+    
+    return updatedNotification;
   }
  
   async markAllAsRead(userId: number): Promise<void> {
-    try {
+    // Lấy tất cả thông báo chưa đọc của người dùng
+    const unreadNotifications = await this.notificationRepository.find({
+      where: { user_id: userId, is_read: false }
+    });
+    
+    // Cập nhật trạng thái đã đọc cho tất cả thông báo
+    if (unreadNotifications.length > 0) {
       await this.notificationRepository.update(
         { user_id: userId, is_read: false },
         { is_read: true }
       );
       
-      // Reset counter về 0
-      await this.unreadCounterService.reset(userId);
-      
-      // Thông báo qua WebSocket
-      this.webSocketClient.sendToUser(
-        userId,
-        NotificationEvents.ALL_NOTIFICATIONS_READ,
-        { unreadCount: 0 }
-      );
-      
-      // Nếu Elasticsearch khả dụng, update tất cả notifications
-      if (this.isElasticsearchAvailable) {
-        try {
-          // Lấy tất cả thông báo của người dùng chưa đọc
-          const notifications = await this.notificationRepository.find({
-            where: { user_id: userId, is_read: false },
+      // Cập nhật Elasticsearch cho từng thông báo
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
+        for (const notification of unreadNotifications) {
+          await this.elasticsearchService.indexNotification({
+            ...notification,
+            is_read: true
           });
-          
-          // Update từng thông báo trong Elasticsearch
-          for (const notification of notifications) {
-            const esNotification = {
-              notification_id: notification.notification_id,
-              is_read: true,
-            };
-            
-            await this.elasticsearchService.updateNotification(esNotification);
-          }
-        } catch (error) {
-          this.logger.error(`Lỗi khi update tất cả thông báo trong Elasticsearch: ${error.message}`);
         }
       }
-    } catch (error) {
-      this.logger.error(`Lỗi khi đánh dấu đã đọc tất cả thông báo của người dùng ${userId}: ${error.message}`);
-      throw error;
     }
+    
+    // Reset counter về 0
+    await this.unreadCounterService.reset(userId);
+    
+    // Thông báo qua WebSocket
+    this.webSocketClient.sendToUser(
+      userId,
+      NotificationEvents.ALL_NOTIFICATIONS_READ,
+      { unreadCount: 0 }
+    );
   }
  
   async remove(id: number): Promise<void> {
-    try {
-      const notification = await this.findOne(id);
-      
-      await this.notificationRepository.remove(notification);
-      
-      // Nếu Elasticsearch khả dụng, delete notification
-      if (this.isElasticsearchAvailable) {
-        try {
-          await this.elasticsearchService.deleteNotification(id);
-        } catch (error) {
-          this.logger.error(`Lỗi khi xóa thông báo khỏi Elasticsearch: ${error.message}`);
-        }
-      }
-    } catch (error) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      this.logger.error(`Lỗi khi xóa thông báo ${id}: ${error.message}`);
-      throw error;
+    const notification = await this.findOne(id);
+    
+    // Xóa khỏi Elasticsearch
+    if (this.elasticsearchService.getElasticsearchAvailability()) {
+      await this.elasticsearchService.removeNotificationFromIndex(notification.notification_id);
+    }
+    
+    // Xóa khỏi database
+    await this.notificationRepository.remove(notification);
+    
+    // Giảm counter nếu thông báo chưa đọc
+    if (!notification.is_read) {
+      await this.unreadCounterService.decrement(notification.user_id);
     }
   }
  
@@ -398,94 +280,94 @@ export class NotificationsService implements OnModuleInit {
  
   // Thêm phương thức để kiểm tra trạng thái thông báo
   async getNotificationStatus(jobId: string): Promise<any> {
-    try {
-      return this.queueService.getJob(jobId);
-    } catch (error) {
-      this.logger.error(`Lỗi khi lấy trạng thái thông báo: ${error.message}`);
-      throw error;
-    }
+    return this.queueService.getJob(jobId);
   }
 
   async getUnreadCount(userId: number): Promise<{ count: number }> {
-    try {
-      // Lấy từ Redis cache trước
-      let count = await this.unreadCounterService.getCount(userId);
+    // Lấy từ Redis cache trước
+    let count = await this.unreadCounterService.getCount(userId);
+    
+    // Nếu counter là 0, kiểm tra lại với database (đề phòng mất đồng bộ)
+    if (count === 0) {
+      const dbCount = await this.notificationRepository.count({
+        where: { user_id: userId, is_read: false }
+      });
       
-      // Nếu counter là 0, kiểm tra lại với database (đề phòng mất đồng bộ)
-      if (count === 0) {
-        const dbCount = await this.notificationRepository.count({
-          where: { user_id: userId, is_read: false }
-        });
-        
-        if (dbCount > 0) {
-          // Nếu có sự khác biệt, đồng bộ lại counter
-          await this.unreadCounterService.sync(userId, dbCount);
-          count = dbCount;
-        }
-      }
-      
-      return { count };
-    } catch (error) {
-      this.logger.error(`Lỗi khi lấy số lượng thông báo chưa đọc: ${error.message}`);
-      return { count: 0 };
-    }
-  }
-
-  async syncAllUnreadCounters(): Promise<void> {
-    try {
-      // Lấy danh sách người dùng
-      const users = await this.userRepository.find({ select: ['user_id'] });
-      
-      for (const user of users) {
-        const count = await this.notificationRepository.count({
-          where: { user_id: user.user_id, is_read: false }
-        });
-        
-        await this.unreadCounterService.sync(user.user_id, count);
-      }
-    } catch (error) {
-      this.logger.error(`Lỗi khi đồng bộ tất cả unread counters: ${error.message}`);
-      throw error;
-    }
-  }
-  
-  // Phương thức tìm kiếm thông báo với Elasticsearch
-  async searchNotifications(query: string, userId: number, page: number = 1, size: number = 10): Promise<any> {
-    if (!this.isElasticsearchAvailable) {
-      // Fallback to regular search if Elasticsearch is not available
-      try {
-        const [notifications, total] = await this.notificationRepository.createQueryBuilder('notification')
-          .where('notification.user_id = :userId', { userId })
-          .andWhere('(notification.title ILIKE :query OR notification.content ILIKE :query)', { query: `%${query}%` })
-          .orderBy('notification.created_at', 'DESC')
-          .skip((page - 1) * size)
-          .take(size)
-          .getManyAndCount();
-        
-        return {
-          results: notifications,
-          pagination: {
-            total,
-            page,
-            size,
-            pages: Math.ceil(total / size),
-          },
-        };
-      } catch (error) {
-        this.logger.error(`Lỗi khi tìm kiếm thông báo: ${error.message}`);
-        return {
-          results: [],
-          pagination: {
-            total: 0,
-            page,
-            size,
-            pages: 0,
-          },
-        };
+      if (dbCount > 0) {
+        // Nếu có sự khác biệt, đồng bộ lại counter
+        await this.unreadCounterService.sync(userId, dbCount);
+        count = dbCount;
       }
     }
     
-    // Use Elasticsearch
-    return this.elasticsearchService.searchNotifications(query, userId, page, size);
+    return { count };
+  }
+
+  async syncAllUnreadCounters(): Promise<void> {
+    // Lấy danh sách người dùng
+    const users = await this.userRepository.find({ select: ['user_id'] });
+    
+    for (const user of users) {
+      const count = await this.notificationRepository.count({
+        where: { user_id: user.user_id, is_read: false }
+      });
+      
+      await this.unreadCounterService.sync(user.user_id, count);
+    }
+  }
+
+  // Tìm kiếm thông báo
+  async searchNotifications(userId: number, query: string): Promise<Notification[]> {
+    try {
+      if (this.elasticsearchService.getElasticsearchAvailability()) {
+        // Sử dụng Elasticsearch để tìm kiếm
+        const searchQuery = {
+          bool: {
+            must: [
+              { term: { user_id: userId.toString() } },
+              { 
+                multi_match: {
+                  query: query,
+                  fields: ['title^2', 'content'],
+                  fuzziness: 'AUTO'
+                }
+              }
+            ]
+          }
+        };
+        
+        const result = await this.elasticsearchService['elasticsearchService'].search({
+          index: 'notifications',
+          body: {
+            query: searchQuery,
+            sort: [
+              { created_at: { order: 'desc' } }
+            ]
+          }
+        });
+        
+        const hits = result.body.hits.hits;
+        if (hits.length > 0) {
+          // Lấy IDs và tìm trong database
+          const notificationIds = hits.map(hit => parseInt(hit._source.notification_id));
+          
+          return this.notificationRepository.find({
+            where: { notification_id: In(notificationIds) },
+            relations: ['user'],
+            order: { created_at: 'DESC' }
+          });
+        }
+      }
+      
+      // Fallback: Search trong database
+      return this.notificationRepository.createQueryBuilder('notification')
+        .where('notification.user_id = :userId', { userId })
+        .andWhere('(notification.title ILIKE :query OR notification.content ILIKE :query)', { query: `%${query}%` })
+        .orderBy('notification.created_at', 'DESC')
+        .getMany();
+    } catch (error) {
+      this.logger.error(`Error searching notifications: ${error.message}`);
+      return [];
+    }
   }
 }

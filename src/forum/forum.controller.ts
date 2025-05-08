@@ -19,6 +19,11 @@ export class ForumController {
     return this.forumService.findAllPosts();
   }
 
+  @Get('posts/search')
+  searchPosts(@Query('q') query: string) {
+    return this.forumService.searchPosts(query);
+  }
+
   @Get('posts/:id')
   findPost(@Param('id') id: string) {
     return this.forumService.findPost(+id);
@@ -49,6 +54,11 @@ export class ForumController {
     return this.forumService.findCommentsByPost(+id);
   }
 
+  @Get('comments/search')
+  searchComments(@Query('q') query: string, @Query('postId') postId?: string) {
+    return this.forumService.searchComments(query, postId ? +postId : undefined);
+  }
+
   @Post('comments')
   createComment(@Body() createCommentDto: CreateCommentDto, @Request() req) {
     // Use current user if userId not provided
@@ -62,33 +72,5 @@ export class ForumController {
   @Delete('comments/:id')
   deleteComment(@Param('id') id: string) {
     return this.forumService.deleteComment(+id);
-  }
-  
-  @Get('search/posts')
-  searchPosts(
-    @Query('query') query: string,
-    @Query('page') page: string = '1',
-    @Query('size') size: string = '10'
-  ) {
-    return this.forumService.searchPosts(
-      query,
-      parseInt(page, 10),
-      parseInt(size, 10)
-    );
-  }
-  
-  @Get('search/comments')
-  searchComments(
-    @Query('query') query: string,
-    @Query('postId') postId?: string,
-    @Query('page') page: string = '1',
-    @Query('size') size: string = '10'
-  ) {
-    return this.forumService.searchComments(
-      query,
-      postId ? parseInt(postId, 10) : undefined,
-      parseInt(page, 10),
-      parseInt(size, 10)
-    );
   }
 }

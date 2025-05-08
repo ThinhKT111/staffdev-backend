@@ -23,7 +23,12 @@ import { CacheModule } from '@nestjs/cache-manager';
 import * as redisStore from 'cache-manager-redis-store';
 import { GlobalRateLimitMiddleware } from './common/middlewares/global-rate-limit.middleware';
 import { DatabaseService } from './database/database.service';
-import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
+import { ElasticsearchModule } from '@nestjs/elasticsearch';
+import { ScheduleModule } from '@nestjs/schedule';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { ElasticsearchConfig } from './elasticsearch/elasticsearch.config';
+import { compression } from 'compression';
+import { helmet } from 'helmet';
 
 @Module({
   imports: [
@@ -42,8 +47,12 @@ import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
         password: configService.get('DB_PASSWORD') || 'password',
         database: configService.get('DB_NAME') || 'staffdev',
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false, // Ensure synchronize is turned off
+        synchronize: false, // Đảm bảo tắt đồng bộ hóa trong production
         logging: configService.get('NODE_ENV') === 'development',
+        ssl: configService.get('DB_SSL') === 'true' ? true : undefined,
+        extra: configService.get('DB_SSL') === 'true' 
+          ? { ssl: { rejectUnauthorized: false } } 
+          : undefined,
       }),
     }),
     CacheModule.registerAsync({
@@ -51,38 +60,77 @@ import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         try {
-          const redisHost = configService.get('REDIS_HOST', '192.168.178.204');
-          const redisPort = parseInt(configService.get('REDIS_PORT', '6379'), 10);
+          // Kiểm tra Redis config
+          const redisHost = configService.get('REDIS_HOST');
+          const redisPort = configService.get('REDIS_PORT');
           
-          console.log(`Attempting to connect to Redis at ${redisHost}:${redisPort}`);
+          if (!redisHost || !redisPort) {
+            console.warn('Redis configuration missing, falling back to memory store');
+            return {
+              ttl: 60 * 60, // 1 giờ mặc định
+              max: 1000, // Số lượng items tối đa trong cache
+            };
+          }
           
-          // Sử dụng client Redis phiên bản mới
-          const { createClient } = require('redis');
-          const client = createClient({
-            url: `redis://${redisHost}:${redisPort}`,
-            socket: {
-              connectTimeout: 5000, // Tăng timeout lên 5 giây
-              reconnectStrategy: (retries) => Math.min(retries * 50, 2000), // Chiến lược kết nối lại
-            }
-          });
-    
-          // Thử kết nối
-          await client.connect();
-          const pingResult = await client.ping();
-          console.log('Redis connection test:', pingResult);
-          await client.disconnect();
-          
-          // Trả về cấu hình Redis nếu kết nối thành công
-          return {
-            store: redisStore,
-            host: redisHost,
-            port: redisPort,
-            ttl: 60 * 60, // 1 giờ mặc định
-            max: 5000, // Tăng số lượng items tối đa trong cache
-            // Không cần password vì Redis trong WSL không có mật khẩu
-          };
+          // Thử kết nối Redis
+          try {
+            const Redis = require('redis');
+            const client = Redis.createClient({
+              socket: {
+                host: redisHost,
+                port: redisPort,
+                connectTimeout: 1000, // Giảm timeout xuống 1 giây
+              },
+              password: configService.get('REDIS_PASSWORD') || undefined,
+            });
+            
+            return new Promise((resolve, reject) => {
+              client.on('connect', () => {
+                client.quit();
+                console.log('Redis connected successfully, using Redis store');
+                resolve({
+                  store: redisStore,
+                  socket: {
+                    host: redisHost,
+                    port: redisPort,
+                  },
+                  password: configService.get('REDIS_PASSWORD') || undefined,
+                  ttl: 60 * 60, // 1 giờ mặc định
+                  max: 1000, // Số lượng items tối đa trong cache
+                });
+              });
+              
+              client.on('error', (err) => {
+                console.warn(`Failed to connect to Redis: ${err.message}, falling back to memory store`);
+                resolve({
+                  ttl: 60 * 60, // 1 giờ mặc định
+                  max: 1000, // Số lượng items tối đa trong cache
+                });
+              });
+              
+              // Timeout sau 1 giây
+              setTimeout(() => {
+                try {
+                  client.quit().catch(() => {}); // Bắt lỗi nếu client đã đóng
+                } catch (e) {
+                  // Bỏ qua lỗi nếu client đã đóng
+                }
+                console.warn('Redis connection timeout, falling back to memory store');
+                resolve({
+                  ttl: 60 * 60, // 1 giờ mặc định
+                  max: 1000, // Số lượng items tối đa trong cache
+                });
+              }, 1000);
+            });
+          } catch (error) {
+            console.warn(`Error initializing Redis: ${error.message}, falling back to memory store`);
+            return {
+              ttl: 60 * 60, // 1 giờ mặc định
+              max: 1000, // Số lượng items tối đa trong cache
+            };
+          }
         } catch (error) {
-          console.warn(`Failed to connect to Redis: ${error.message}, falling back to memory store`);
+          console.warn(`Generic error in cache config: ${error.message}, falling back to memory store`);
           return {
             ttl: 60 * 60, // 1 giờ mặc định
             max: 1000, // Số lượng items tối đa trong cache
@@ -91,6 +139,23 @@ import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
       },
       inject: [ConfigService],
     }),
+    ElasticsearchModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => ({
+        node: configService.get('ELASTICSEARCH_NODE') || 'http://localhost:9200',
+        auth: {
+          username: configService.get('ELASTICSEARCH_USERNAME') || '',
+          password: configService.get('ELASTICSEARCH_PASSWORD') || '',
+        },
+        maxRetries: 5,
+        requestTimeout: 10000,
+        ssl: {
+          rejectUnauthorized: configService.get('ELASTICSEARCH_SSL_VERIFY') !== 'false',
+        },
+      }),
+    }),
+    ScheduleModule.forRoot(),
     AuthModule,
     UsersModule,
     TrainingModule,
@@ -105,10 +170,10 @@ import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
     SeedModule,
     SharedModule,
     ProfilesModule,
-    AppElasticsearchModule
+    DashboardModule,
   ],
   controllers: [AppController, DatabaseController],
-  providers: [AppService, DatabaseService],
+  providers: [AppService, DatabaseService, ElasticsearchConfig],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
