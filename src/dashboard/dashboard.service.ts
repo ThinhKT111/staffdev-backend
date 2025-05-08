@@ -1,21 +1,37 @@
 // src/dashboard/dashboard.service.ts
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, IsNull, Between, LessThan, In } from 'typeorm';
+import { Repository, Not, IsNull, Between } from 'typeorm';
 import { User } from '../entities/user.entity';
-import { Task, TaskStatus } from '../entities/task.entity';
+import { Task } from '../entities/task.entity';
 import { Attendance } from '../entities/attendance.entity';
-import { UserCourse, CourseStatus } from '../entities/user-course.entity';
+import { UserCourse } from '../entities/user-course.entity';
 import { Course } from '../entities/course.entity';
 import { ForumPost } from '../entities/forum-post.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
-import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
+
+interface StatsResult {
+  totalUsers: number;
+  usersByRole: any[];
+  tasksByStatus: any[];
+  recentPosts: number;
+}
+
+interface AttendanceStatsResult {
+  checkInsToday: number;
+  pendingLeaves: number;
+  overtimeHours: number | string;
+}
+
+interface TrainingStatsResult {
+  activeCourses: number;
+  courseRegistrationByStatus: any[];
+  averageScore: number | string;
+}
 
 @Injectable()
 export class DashboardService {
-  private readonly logger = new Logger(DashboardService.name);
-
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
@@ -36,12 +52,11 @@ export class DashboardService {
     private forumPostsRepository: Repository<ForumPost>,
     
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
-    private elasticsearchService: ElasticsearchService,
   ) {}
 
-  async getStats() {
+  async getStats(): Promise<StatsResult> {
     // Kiểm tra cache
-    const cachedStats = await this.cacheManager.get('dashboard_stats');
+    const cachedStats = await this.cacheManager.get<StatsResult>('dashboard_stats');
     
     if (cachedStats) {
       return cachedStats;
@@ -73,7 +88,7 @@ export class DashboardService {
       .where('post.created_at >= :date', { date: thirtyDaysAgo })
       .getCount();
     
-    const stats = {
+    const stats: StatsResult = {
       totalUsers,
       usersByRole,
       tasksByStatus,
@@ -86,9 +101,9 @@ export class DashboardService {
     return stats;
   }
 
-  async getAttendanceStats() {
+  async getAttendanceStats(): Promise<AttendanceStatsResult> {
     // Kiểm tra cache
-    const cachedStats = await this.cacheManager.get('attendance_stats');
+    const cachedStats = await this.cacheManager.get<AttendanceStatsResult>('attendance_stats');
     
     if (cachedStats) {
       return cachedStats;
@@ -125,7 +140,7 @@ export class DashboardService {
       .andWhere('attendance.overtime_hours IS NOT NULL')
       .getRawOne();
     
-    const stats = {
+    const stats: AttendanceStatsResult = {
       checkInsToday,
       pendingLeaves,
       overtimeHours: overtimeHours?.total || 0,
@@ -137,9 +152,9 @@ export class DashboardService {
     return stats;
   }
 
-  async getTrainingStats() {
+  async getTrainingStats(): Promise<TrainingStatsResult> {
     // Kiểm tra cache
-    const cachedStats = await this.cacheManager.get('training_stats');
+    const cachedStats = await this.cacheManager.get<TrainingStatsResult>('training_stats');
     
     if (cachedStats) {
       return cachedStats;
@@ -163,11 +178,11 @@ export class DashboardService {
     const averageScore = await this.userCoursesRepository
       .createQueryBuilder('userCourse')
       .select('AVG(userCourse.score)', 'average')
-      .where('userCourse.status = :status', { status: CourseStatus.COMPLETED })
+      .where('userCourse.status = :status', { status: 'Completed' })
       .andWhere('userCourse.score IS NOT NULL')
       .getRawOne();
     
-    const stats = {
+    const stats: TrainingStatsResult = {
       activeCourses,
       courseRegistrationByStatus,
       averageScore: averageScore?.average || 0,
@@ -179,61 +194,8 @@ export class DashboardService {
     return stats;
   }
   
-  // Advanced dashboard method leveraging Elasticsearch
-  async getEnhancedDashboard() {
-    try {
-      // Get data from various sources
-      const baseStats = await this.getStats();
-      const attendanceStats = await this.getAttendanceStats();
-      const trainingStats = await this.getTrainingStats();
-      
-      // Get upcoming tasks from Elasticsearch
-      const upcomingTasks = await this.elasticsearchService.getUpcomingTasks(5);
-      
-      // Get document categories from Elasticsearch
-      const documentCategories = await this.elasticsearchService.getDocumentCategories();
-      
-      // Get recent documents from Elasticsearch
-      const recentDocuments = await this.elasticsearchService.getRecentDocuments(5);
-      
-      // Combine all data
-      return {
-        totalUsers: baseStats.totalUsers,
-        checkInsToday: attendanceStats.checkInsToday,
-        pendingLeaves: attendanceStats.pendingLeaves,
-        activeCourses: trainingStats.activeCourses,
-        courseRegistrationByStatus: trainingStats.courseRegistrationByStatus,
-        upcomingTasks,
-        documentCategories,
-        recentDocuments,
-        usersByRole: baseStats.usersByRole,
-        tasksByStatus: baseStats.tasksByStatus,
-      };
-    } catch (error) {
-      this.logger.error(`Error getting enhanced dashboard: ${error.message}`);
-      
-      // Return basic dashboard if we encounter any errors with Elasticsearch
-      const baseStats = await this.getStats();
-      const attendanceStats = await this.getAttendanceStats();
-      const trainingStats = await this.getTrainingStats();
-      
-      return {
-        totalUsers: baseStats.totalUsers,
-        checkInsToday: attendanceStats.checkInsToday,
-        pendingLeaves: attendanceStats.pendingLeaves,
-        activeCourses: trainingStats.activeCourses,
-        courseRegistrationByStatus: trainingStats.courseRegistrationByStatus,
-        upcomingTasks: [],
-        documentCategories: [],
-        recentDocuments: [],
-        usersByRole: baseStats.usersByRole,
-        tasksByStatus: baseStats.tasksByStatus,
-      };
-    }
-  }
-  
   // Phương thức để xóa cache khi cần
-  async invalidateDashboardCache() {
+  async invalidateDashboardCache(): Promise<void> {
     await this.cacheManager.del('dashboard_stats');
     await this.cacheManager.del('attendance_stats');
     await this.cacheManager.del('training_stats');

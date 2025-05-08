@@ -19,11 +19,6 @@ export class ForumController {
     return this.forumService.findAllPosts();
   }
 
-  @Get('posts/search')
-  searchPosts(@Query('q') query: string) {
-    return this.forumService.searchPosts(query);
-  }
-
   @Get('posts/:id')
   findPost(@Param('id') id: string) {
     return this.forumService.findPost(+id);
@@ -67,14 +62,5 @@ export class ForumController {
   @Delete('comments/:id')
   deleteComment(@Param('id') id: string) {
     return this.forumService.deleteComment(+id);
-  }
-
-  @Get('posts/:id/comments/search')
-  @UseGuards(JwtAuthGuard)
-  searchComments(
-    @Param('id') id: string,
-    @Query('q') query: string = ''
-  ) {
-    return this.forumService.searchComments(+id, query);
   }
 }

@@ -1,13 +1,12 @@
 // src/elasticsearch/elasticsearch.controller.ts
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ElasticsearchService } from './elasticsearch.service';
+import { Controller, Get, Query, UseGuards, Param } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../entities/user.entity';
-import { TaskStatus } from '../entities/task.entity';
+import { ElasticsearchService } from './elasticsearch.service';
 
-@Controller('elasticsearch')
+@Controller('search')
 @UseGuards(JwtAuthGuard)
 export class ElasticsearchController {
   constructor(private readonly elasticsearchService: ElasticsearchService) {}
@@ -15,52 +14,62 @@ export class ElasticsearchController {
   @Get('health')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  checkHealth() {
-    return this.elasticsearchService.checkHealth();
+  async checkHealth() {
+    const isHealthy = await this.elasticsearchService.checkHealth();
+    return {
+      status: isHealthy ? 'healthy' : 'unhealthy',
+    };
   }
 
-  @Get('search/tasks')
-  @UseGuards(JwtAuthGuard)
+  @Get('tasks')
   async searchTasks(
-    @Query('q') query: string = '',
-    @Query('status') statusStr?: string,
-    @Query('limit') limit: number = 10
+    @Query('query') query: string,
+    @Query('status') status: string,
+    @Query('fromDate') fromDate: string,
+    @Query('toDate') toDate: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
   ) {
-    // Chuyển đổi status string thành enum TaskStatus nếu có
-    let status: TaskStatus | undefined;
-    
-    if (statusStr) {
-      switch (statusStr) {
-        case 'Pending':
-          status = TaskStatus.PENDING;
-          break;
-        case 'InProgress':
-          status = TaskStatus.IN_PROGRESS;
-          break;
-        case 'Completed':
-          status = TaskStatus.COMPLETED;
-          break;
-        case 'Rejected':
-          status = TaskStatus.REJECTED;
-          break;
-      }
-    }
-    
-    return this.elasticsearchService.searchTasks(query, status, limit);
+    const statusList = status ? status.split(',') : undefined;
+    return this.elasticsearchService.searchTasks(
+      query,
+      statusList,
+      fromDate,
+      toDate,
+      page,
+      limit,
+    );
   }
 
-  @Get('search/notifications')
-  @UseGuards(JwtAuthGuard)
+  @Get('documents')
+  async searchDocuments(
+    @Query('query') query: string,
+    @Query('category') category: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+  ) {
+    return this.elasticsearchService.searchDocuments(
+      query,
+      category,
+      page,
+      limit,
+    );
+  }
+
+  @Get('notifications')
   async searchNotifications(
-    @Query('userId') userId: number,
-    @Query('q') query: string = '',
-    @Query('limit') limit: number = 10
+    @Query('query') query: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
   ) {
-    return this.elasticsearchService.searchNotifications(userId, query, limit);
+    return this.elasticsearchService.searchNotifications(
+      query,
+      page,
+      limit,
+    );
   }
 
-  @Get('statistics/documents')
-  @UseGuards(JwtAuthGuard)
+  @Get('document-stats')
   async getDocumentStatistics() {
     return this.elasticsearchService.getDocumentStatistics();
   }

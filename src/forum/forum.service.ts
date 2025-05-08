@@ -8,7 +8,6 @@ import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { CommentCounterService } from './services/comment-counter.service';
-import { ElasticsearchService } from '../elasticsearch/elasticsearch.service';
 
 @Injectable()
 export class ForumService implements OnModuleInit {
@@ -22,7 +21,6 @@ export class ForumService implements OnModuleInit {
     private commentsRepository: Repository<ForumComment>,
     
     private commentCounterService: CommentCounterService,
-    private elasticsearchService: ElasticsearchService,
   ) {}
   
   async onModuleInit() {
@@ -36,19 +34,19 @@ export class ForumService implements OnModuleInit {
   
   private async initializeCommentCounters(): Promise<void> {
     try {
-      // Kiểm tra bảng forumposts có tồn tại không
+      // Kiểm tra bảng forum_posts có tồn tại không
       const checkTableExists = async () => {
         try {
           // Thử đếm số lượng bản ghi để kiểm tra bảng có tồn tại không
           await this.postsRepository.count();
           return true;
         } catch (error) {
-          if (error.message && (error.message.includes('relation "forumposts" does not exist') || 
+          if (error.message && (error.message.includes('relation "forum_posts" does not exist') || 
               error.message.includes('relation "ForumPosts" does not exist'))) {
-            this.logger.warn('The forumposts table does not exist yet. Skipping counter initialization.');
+            this.logger.warn('The forum_posts table does not exist yet. Skipping counter initialization.');
             return false;
           }
-          this.logger.error(`Error checking forumposts table: ${error.message}`);
+          this.logger.error(`Error checking forum_posts table: ${error.message}`);
           throw error; // Re-throw nếu là lỗi khác
         }
       };
@@ -134,9 +132,6 @@ export class ForumService implements OnModuleInit {
       // Thêm commentCount vào kết quả
       savedPost['commentCount'] = 0;
       
-      // Index post to Elasticsearch
-      await this.elasticsearchService.indexForumPost(savedPost);
-      
       return savedPost;
     } catch (error) {
       this.logger.error(`Error creating post: ${error.message}`);
@@ -161,9 +156,6 @@ export class ForumService implements OnModuleInit {
       // Thêm commentCount vào kết quả
       savedPost['commentCount'] = await this.commentCounterService.getCount(id);
       
-      // Update in Elasticsearch
-      await this.elasticsearchService.indexForumPost(savedPost);
-      
       return savedPost;
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -186,8 +178,6 @@ export class ForumService implements OnModuleInit {
       
       // Xóa comment counter
       await this.commentCounterService.removeCount(id);
-      
-      // TODO: Remove from Elasticsearch when implemented
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
