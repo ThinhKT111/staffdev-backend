@@ -51,76 +51,41 @@ import { AppElasticsearchModule } from './elasticsearch/elasticsearch.module';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         try {
-          // Check Redis config
-          const redisHost = configService.get('REDIS_HOST');
-          const redisPort = configService.get('REDIS_PORT');
+          const redisHost = configService.get('REDIS_HOST', '192.168.178.204');
+          const redisPort = parseInt(configService.get('REDIS_PORT', '6379'), 10);
           
-          if (!redisHost || !redisPort) {
-            console.warn('Redis configuration missing, falling back to memory store');
-            return {
-              ttl: 60 * 60, // 1 hour default
-              max: 1000, // Maximum items in cache
-            };
-          }
+          console.log(`Attempting to connect to Redis at ${redisHost}:${redisPort}`);
           
-          // Try to connect to Redis
-          try {
-            const Redis = require('redis');
-            const client = Redis.createClient({
-              host: redisHost,
-              port: redisPort,
-              socket: {
-                connectTimeout: 1000, // Reduce timeout to 1 second
-              }
-            });
-            
-            return new Promise((resolve, reject) => {
-              client.on('connect', () => {
-                client.quit();
-                console.log('Redis connected successfully, using Redis store');
-                resolve({
-                  store: redisStore,
-                  host: redisHost,
-                  port: redisPort,
-                  ttl: 60 * 60, // 1 hour default
-                  max: 1000, // Maximum items in cache
-                });
-              });
-              
-              client.on('error', (err) => {
-                console.warn(`Failed to connect to Redis: ${err.message}, falling back to memory store`);
-                resolve({
-                  ttl: 60 * 60, // 1 hour default
-                  max: 1000, // Maximum items in cache
-                });
-              });
-              
-              // Timeout after 1 second
-              setTimeout(() => {
-                try {
-                  client.quit().catch(() => {}); // Catch error if client is already closed
-                } catch (e) {
-                  // Ignore errors if client is already closed
-                }
-                console.warn('Redis connection timeout, falling back to memory store');
-                resolve({
-                  ttl: 60 * 60, // 1 hour default
-                  max: 1000, // Maximum items in cache
-                });
-              }, 1000);
-            });
-          } catch (error) {
-            console.warn(`Error initializing Redis: ${error.message}, falling back to memory store`);
-            return {
-              ttl: 60 * 60, // 1 hour default
-              max: 1000, // Maximum items in cache
-            };
-          }
-        } catch (error) {
-          console.warn(`Generic error in cache config: ${error.message}, falling back to memory store`);
+          // Sử dụng client Redis phiên bản mới
+          const { createClient } = require('redis');
+          const client = createClient({
+            url: `redis://${redisHost}:${redisPort}`,
+            socket: {
+              connectTimeout: 5000, // Tăng timeout lên 5 giây
+              reconnectStrategy: (retries) => Math.min(retries * 50, 2000), // Chiến lược kết nối lại
+            }
+          });
+    
+          // Thử kết nối
+          await client.connect();
+          const pingResult = await client.ping();
+          console.log('Redis connection test:', pingResult);
+          await client.disconnect();
+          
+          // Trả về cấu hình Redis nếu kết nối thành công
           return {
-            ttl: 60 * 60, // 1 hour default
-            max: 1000, // Maximum items in cache
+            store: redisStore,
+            host: redisHost,
+            port: redisPort,
+            ttl: 60 * 60, // 1 giờ mặc định
+            max: 5000, // Tăng số lượng items tối đa trong cache
+            // Không cần password vì Redis trong WSL không có mật khẩu
+          };
+        } catch (error) {
+          console.warn(`Failed to connect to Redis: ${error.message}, falling back to memory store`);
+          return {
+            ttl: 60 * 60, // 1 giờ mặc định
+            max: 1000, // Số lượng items tối đa trong cache
           };
         }
       },
