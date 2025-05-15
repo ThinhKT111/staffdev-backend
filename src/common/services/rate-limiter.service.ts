@@ -1,55 +1,19 @@
 // src/common/services/rate-limiter.service.ts
-import { Injectable, Inject, Logger } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
+import { Injectable, Logger } from '@nestjs/common';
+import { RedisService } from './redis.service';
 
 @Injectable()
 export class RateLimiterService {
   private readonly logger = new Logger(RateLimiterService.name);
-  private redisAvailable: boolean = false;
-  private redisClient: any = null;
   private memoryRateLimits: Map<string, number[]> = new Map(); // Fallback khi Redis không khả dụng
 
-  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {
-    // Kiểm tra xem Redis có khả dụng không
-    this.checkRedisAvailability();
-  }
-
-  private async checkRedisAvailability(): Promise<void> {
-    try {
-      this.redisClient = this.getRedisClient();
-      if (this.redisClient) {
-        // Thử ping Redis để kiểm tra kết nối
-        await this.redisClient.ping();
-        this.redisAvailable = true;
-        this.logger.log('Redis is available for rate limiting');
-      } else {
-        this.redisAvailable = false;
-        this.logger.warn('Redis client is not available for rate limiting, using memory store instead');
-      }
-    } catch (error) {
-      this.redisAvailable = false;
-      this.redisClient = null;
-      this.logger.error(`Redis connection failed for rate limiting: ${error.message}`);
-    }
-  }
-
-  // Lấy Redis client một cách an toàn
-  private getRedisClient(): any {
-    try {
-      const store = (this.cacheManager as any).store;
-      if (store && typeof store.getClient === 'function') {
-        return store.getClient();
-      }
-      return null;
-    } catch (error) {
-      this.logger.error(`Failed to get Redis client: ${error.message}`);
-      return null;
-    }
+  constructor(private redisService: RedisService) {
+    this.logger.log('RateLimiterService initialized with RedisService');
   }
 
   async isRateLimited(key: string, limit: number, windowSeconds: number): Promise<boolean> {
-    if (this.redisAvailable && this.redisClient) {
+    const redisClient = this.redisService.getClient();
+    if (this.redisService.isReady() && redisClient) {
       try {
         const now = Date.now();
         
@@ -58,10 +22,10 @@ export class RateLimiterService {
         
         // Xóa timestamp cũ
         const windowStart = now - (windowSeconds * 1000);
-        await this.redisClient.zremrangebyscore(keyName, 0, windowStart);
+        await redisClient.zRemRangeByScore(keyName, 0, windowStart);
         
         // Đếm requests hiện tại trong window
-        const count = await this.redisClient.zcard(keyName);
+        const count = await redisClient.zCard(keyName);
         
         // Nếu đã vượt quá giới hạn
         if (count >= limit) {
@@ -69,16 +33,18 @@ export class RateLimiterService {
         }
         
         // Thêm timestamp hiện tại
-        await this.redisClient.zadd(keyName, now, `${now}-${Math.random()}`);
+        await redisClient.zAdd(keyName, { score: now, value: `${now}-${Math.random()}` });
         
         // Set expiration để tự động xóa
-        await this.redisClient.expire(keyName, windowSeconds);
+        await redisClient.expire(keyName, windowSeconds);
         
         return false;
       } catch (error) {
         this.logger.error(`Redis rate limiting error: ${error.message}`);
         // Fallback to memory rate limiting
       }
+    } else {
+      this.logger.warn('Redis client is not available for rate limiting, using memory store instead');
     }
     
     // Sử dụng memory rate limiting nếu Redis không khả dụng

@@ -39,12 +39,19 @@ export interface SearchNotificationsResult {
   }>;
 }
 
+// Simplified type for elasticsearch aggregations buckets
+interface ElasticsearchBucket {
+  key: string;
+  doc_count: number;
+}
+
 @Injectable()
 export class ElasticsearchService {
   private readonly logger = new Logger(ElasticsearchService.name);
   private readonly taskIndex = 'tasks';
   private readonly documentIndex = 'documents';
   private readonly notificationIndex = 'notifications';
+  private isElasticsearchAvailable = false;
 
   constructor(private readonly esService: BaseElasticsearchService) {
     this.initIndices();
@@ -52,6 +59,14 @@ export class ElasticsearchService {
 
   private async initIndices(): Promise<void> {
     try {
+      // Check if Elasticsearch is available
+      this.isElasticsearchAvailable = await this.checkHealth();
+      
+      if (!this.isElasticsearchAvailable) {
+        this.logger.warn('Elasticsearch is not available. Skipping index initialization.');
+        return;
+      }
+
       // Create tasks index if it doesn't exist
       const tasksExists = await this.esService.indices.exists({
         index: this.taskIndex,
@@ -60,17 +75,15 @@ export class ElasticsearchService {
       if (!tasksExists) {
         await this.esService.indices.create({
           index: this.taskIndex,
-          body: {
-            mappings: {
-              properties: {
-                id: { type: 'integer' },
-                title: { type: 'text' },
-                description: { type: 'text' },
-                status: { type: 'keyword' },
-                deadline: { type: 'date' },
-                created_at: { type: 'date' },
-                updated_at: { type: 'date' },
-              }
+          mappings: {
+            properties: {
+              id: { type: 'integer' },
+              title: { type: 'text' },
+              description: { type: 'text' },
+              status: { type: 'keyword' },
+              deadline: { type: 'date' },
+              created_at: { type: 'date' },
+              updated_at: { type: 'date' },
             }
           }
         });
@@ -85,15 +98,13 @@ export class ElasticsearchService {
       if (!documentsExists) {
         await this.esService.indices.create({
           index: this.documentIndex,
-          body: {
-            mappings: {
-              properties: {
-                id: { type: 'integer' },
-                title: { type: 'text' },
-                category: { type: 'keyword' },
-                content: { type: 'text' },
-                uploaded_at: { type: 'date' },
-              }
+          mappings: {
+            properties: {
+              id: { type: 'integer' },
+              title: { type: 'text' },
+              category: { type: 'keyword' },
+              content: { type: 'text' },
+              uploaded_at: { type: 'date' },
             }
           }
         });
@@ -108,27 +119,32 @@ export class ElasticsearchService {
       if (!notificationsExists) {
         await this.esService.indices.create({
           index: this.notificationIndex,
-          body: {
-            mappings: {
-              properties: {
-                id: { type: 'integer' },
-                title: { type: 'text' },
-                content: { type: 'text' },
-                created_at: { type: 'date' },
-                updated_at: { type: 'date' },
-              }
+          mappings: {
+            properties: {
+              id: { type: 'integer' },
+              title: { type: 'text' },
+              content: { type: 'text' },
+              created_at: { type: 'date' },
+              updated_at: { type: 'date' },
             }
           }
         });
         this.logger.log(`Created index: ${this.notificationIndex}`);
       }
     } catch (error) {
+      this.isElasticsearchAvailable = false;
       this.logger.error('Error initializing Elasticsearch indices', error);
     }
   }
 
+  getElasticsearchAvailability(): boolean {
+    return this.isElasticsearchAvailable;
+  }
+
   async indexTask(task: Task): Promise<void> {
     try {
+      if (!this.isElasticsearchAvailable) return;
+      
       await this.esService.index({
         index: this.taskIndex,
         id: task.task_id.toString(),
@@ -147,6 +163,40 @@ export class ElasticsearchService {
     }
   }
 
+  async indexNotification(notification: Notification): Promise<void> {
+    try {
+      if (!this.isElasticsearchAvailable) return;
+      
+      await this.esService.index({
+        index: this.notificationIndex,
+        id: notification.notification_id.toString(),
+        document: {
+          id: notification.notification_id,
+          user_id: notification.user_id,
+          title: notification.title,
+          content: notification.content,
+          is_read: notification.is_read,
+          created_at: notification.created_at,
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Error indexing notification ${notification.notification_id}`, error);
+    }
+  }
+
+  async removeNotificationFromIndex(notificationId: number): Promise<void> {
+    try {
+      if (!this.isElasticsearchAvailable) return;
+      
+      await this.esService.delete({
+        index: this.notificationIndex,
+        id: notificationId.toString(),
+      });
+    } catch (error) {
+      this.logger.error(`Error removing notification ${notificationId} from index`, error);
+    }
+  }
+
   async searchTasks(
     query: string,
     status?: string[],
@@ -156,6 +206,10 @@ export class ElasticsearchService {
     limit = 10
   ): Promise<SearchTasksResult> {
     try {
+      if (!this.isElasticsearchAvailable) {
+        return { totalCount: 0, items: [] };
+      }
+      
       const from = (page - 1) * limit;
 
       // Build search query
@@ -205,10 +259,8 @@ export class ElasticsearchService {
 
       const response = await this.esService.search({
         index: this.taskIndex,
-        body: {
-          query: searchQuery,
-          sort: [{ deadline: { order: 'asc' } }],
-        },
+        query: searchQuery,
+        sort: [{ deadline: { order: 'asc' } }],
         from,
         size: limit,
       });
@@ -251,6 +303,10 @@ export class ElasticsearchService {
     limit = 10
   ): Promise<SearchDocumentsResult> {
     try {
+      if (!this.isElasticsearchAvailable) {
+        return { totalCount: 0, items: [] };
+      }
+      
       const from = (page - 1) * limit;
 
       // Build search query
@@ -286,10 +342,8 @@ export class ElasticsearchService {
 
       const response = await this.esService.search({
         index: this.documentIndex,
-        body: {
-          query: searchQuery,
-          sort: [{ uploaded_at: { order: 'desc' } }],
-        },
+        query: searchQuery,
+        sort: [{ uploaded_at: { order: 'desc' } }],
         from,
         size: limit,
       });
@@ -324,32 +378,32 @@ export class ElasticsearchService {
 
   async getDocumentStatistics(): Promise<any> {
     try {
+      if (!this.isElasticsearchAvailable) {
+        return { categories: [], recentDocuments: [] };
+      }
+      
       const response = await this.esService.search({
         index: this.documentIndex,
-        body: {
-          size: 0,
-          aggs: {
-            categories: {
-              terms: {
-                field: 'category.keyword',
-                size: 20,
-              },
+        size: 0,
+        aggs: {
+          categories: {
+            terms: {
+              field: 'category.keyword',
+              size: 20,
             },
           },
         },
       });
 
-      const categories = response.aggregations?.categories?.buckets || [];
+      // Cast aggregations to expected structure to handle typing issues
+      const categoriesAgg = response.aggregations?.categories as any;
+      const buckets = categoriesAgg?.buckets as ElasticsearchBucket[] || [];
 
       // Get recent documents
       const recentResponse = await this.esService.search({
         index: this.documentIndex,
-        body: {
-          query: {
-            match_all: {},
-          },
-          sort: [{ uploaded_at: { order: 'desc' } }],
-        },
+        query: { match_all: {} },
+        sort: [{ uploaded_at: { order: 'desc' } }],
         size: 5,
       });
 
@@ -364,7 +418,7 @@ export class ElasticsearchService {
       });
 
       return {
-        categories: categories.map((bucket: any) => ({
+        categories: buckets.map((bucket) => ({
           category: bucket.key,
           count: bucket.doc_count,
         })),
@@ -385,6 +439,10 @@ export class ElasticsearchService {
     limit = 10
   ): Promise<SearchNotificationsResult> {
     try {
+      if (!this.isElasticsearchAvailable) {
+        return { totalCount: 0, items: [] };
+      }
+      
       const from = (page - 1) * limit;
 
       const searchQuery = query ? {
@@ -399,10 +457,8 @@ export class ElasticsearchService {
 
       const response = await this.esService.search({
         index: this.notificationIndex,
-        body: {
-          query: searchQuery,
-          sort: [{ created_at: { order: 'desc' } }],
-        },
+        query: searchQuery,
+        sort: [{ created_at: { order: 'desc' } }],
         from,
         size: limit,
       });

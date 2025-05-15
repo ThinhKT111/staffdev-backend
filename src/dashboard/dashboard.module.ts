@@ -10,7 +10,6 @@ import { UserCourse } from '../entities/user-course.entity';
 import { Course } from '../entities/course.entity';
 import { ForumPost } from '../entities/forum-post.entity';
 import { AppElasticsearchModule } from '../elasticsearch/elasticsearch.module';
-import { CacheModule } from '@nestjs/cache-manager';
 
 @Module({
   imports: [
@@ -23,7 +22,6 @@ import { CacheModule } from '@nestjs/cache-manager';
       ForumPost,
     ]),
     AppElasticsearchModule,
-    CacheModule,
   ],
   providers: [DashboardService],
   controllers: [DashboardController],

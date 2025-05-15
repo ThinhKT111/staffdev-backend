@@ -10,6 +10,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WebSocketRateLimiter } from '../shared/websocket-rate-limit';
 import { UnreadCounterService } from './services/unread-counter.service';
+import { AppElasticsearchModule } from '../elasticsearch/elasticsearch.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { UnreadCounterService } from './services/unread-counter.service';
         signOptions: { expiresIn: '1d' },
       }),
     }),
+    AppElasticsearchModule,
   ],
   providers: [
     NotificationsService, 

@@ -72,7 +72,7 @@ export class NotificationsService implements OnModuleInit {
       });
       
       // Index vào ElasticSearch nếu có thể
-      if (this.elasticsearchService.getElasticsearchAvailability()) {
+      if (this.elasticsearchService.getElasticsearchAvailability() && notificationWithUser) {
         await this.elasticsearchService.indexNotification(notificationWithUser);
       }
       
@@ -320,46 +320,26 @@ export class NotificationsService implements OnModuleInit {
   async searchNotifications(userId: number, query: string): Promise<Notification[]> {
     try {
       if (this.elasticsearchService.getElasticsearchAvailability()) {
-        // Sử dụng Elasticsearch để tìm kiếm
-        const searchQuery = {
-          bool: {
-            must: [
-              { term: { user_id: userId.toString() } },
-              { 
-                multi_match: {
-                  query: query,
-                  fields: ['title^2', 'content'],
-                  fuzziness: 'AUTO'
-                }
-              }
-            ]
-          }
-        };
+        // Use the searchNotifications method from ElasticsearchService
+        const searchResult = await this.elasticsearchService.searchNotifications(query, 1, 100);
         
-        const result = await this.elasticsearchService['elasticsearchService'].search({
-          index: 'notifications',
-          body: {
-            query: searchQuery,
-            sort: [
-              { created_at: { order: 'desc' } }
-            ]
-          }
-        });
-        
-        const hits = result.body.hits.hits;
-        if (hits.length > 0) {
-          // Lấy IDs và tìm trong database
-          const notificationIds = hits.map(hit => parseInt(hit._source.notification_id));
+        if (searchResult.items.length > 0) {
+          // Extract IDs from search results
+          const notificationIds = searchResult.items.map(item => item.id);
           
+          // Fetch full notifications with relationships from database
           return this.notificationRepository.find({
-            where: { notification_id: In(notificationIds) },
+            where: { 
+              notification_id: In(notificationIds),
+              user_id: userId
+            },
             relations: ['user'],
             order: { created_at: 'DESC' }
           });
         }
       }
       
-      // Fallback: Search trong database
+      // Fallback: Search in database
       return this.notificationRepository.createQueryBuilder('notification')
         .where('notification.user_id = :userId', { userId })
         .andWhere('(notification.title ILIKE :query OR notification.content ILIKE :query)', { query: `%${query}%` })

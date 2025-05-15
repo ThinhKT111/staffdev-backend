@@ -1,10 +1,9 @@
 // src/forum/services/comment-counter.service.ts
-import { Injectable, Inject, Logger } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ForumComment } from '../../entities/forum-comment.entity';
+import { RedisService } from '../../common/services/redis.service';
 
 interface ResultItem {
   postId: number;
@@ -16,62 +15,28 @@ interface ResultItem {
 @Injectable()
 export class CommentCounterService {
   private readonly logger = new Logger(CommentCounterService.name);
-  private redisAvailable: boolean = false;
-  private redisClient: any = null;
   private memoryCache: Map<number, number> = new Map(); // Fallback cache khi Redis không khả dụng
 
   constructor(
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private redisService: RedisService,
     @InjectRepository(ForumComment)
     private commentsRepository: Repository<ForumComment>,
   ) {
-    // Kiểm tra xem Redis có khả dụng không
-    this.checkRedisAvailability();
-  }
-
-  private async checkRedisAvailability(): Promise<void> {
-    try {
-      this.redisClient = this.getRedisClient();
-      if (this.redisClient) {
-        // Thử ping Redis để kiểm tra kết nối
-        await this.redisClient.ping();
-        this.redisAvailable = true;
-        this.logger.log('Redis is available for comment counters');
-      } else {
-        this.redisAvailable = false;
-        this.redisClient = null;
-        this.logger.warn('Redis client is not available for comment counters, using memory cache instead');
-      }
-    } catch (error) {
-      this.redisAvailable = false;
-      this.redisClient = null;
-      this.logger.error(`Redis connection failed for comment counters: ${error.message}`);
-    }
-  }
-
-  // Lấy Redis client một cách an toàn
-  private getRedisClient(): any {
-    try {
-      const store = (this.cacheManager as any).store;
-      if (store && typeof store.getClient === 'function') {
-        return store.getClient();
-      }
-      return null;
-    } catch (error) {
-      this.logger.error(`Failed to get Redis client: ${error.message}`);
-      return null;
-    }
+    this.logger.log('CommentCounterService initialized with RedisService');
   }
 
   // Tăng số lượng comment của post
   async increment(postId: number): Promise<number> {
     try {
-      if (this.redisAvailable && this.redisClient) {
+      const redisClient = this.redisService.getClient();
+      if (this.redisService.isReady() && redisClient) {
         try {
-          return await this.redisClient.incr(`post_comments:${postId}`);
+          return await redisClient.incr(`post_comments:${postId}`);
         } catch (error) {
           this.logger.error(`Redis increment error: ${error.message}`);
         }
+      } else {
+        this.logger.warn('Redis not available for comment counters, using memory cache');
       }
       
       // Fallback to memory cache
@@ -89,13 +54,14 @@ export class CommentCounterService {
   // Giảm số lượng comment của post
   async decrement(postId: number): Promise<number> {
     try {
-      if (this.redisAvailable && this.redisClient) {
+      const redisClient = this.redisService.getClient();
+      if (this.redisService.isReady() && redisClient) {
         try {
-          const count = await this.redisClient.decr(`post_comments:${postId}`);
+          const count = await redisClient.decr(`post_comments:${postId}`);
           
           // Đảm bảo không âm
           if (count < 0) {
-            await this.redisClient.set(`post_comments:${postId}`, 0);
+            await redisClient.set(`post_comments:${postId}`, 0);
             return 0;
           }
           
@@ -120,9 +86,10 @@ export class CommentCounterService {
   // Lấy số lượng comment của post
   async getCount(postId: number): Promise<number> {
     try {
-      if (this.redisAvailable && this.redisClient) {
+      const redisClient = this.redisService.getClient();
+      if (this.redisService.isReady() && redisClient) {
         try {
-          const count = await this.redisClient.get(`post_comments:${postId}`);
+          const count = await redisClient.get(`post_comments:${postId}`);
           return count ? parseInt(count, 10) : 0;
         } catch (error) {
           this.logger.error(`Redis get count error: ${error.message}`);
@@ -140,9 +107,10 @@ export class CommentCounterService {
   // Đặt số lượng comment
   async setCount(postId: number, count: number): Promise<void> {
     try {
-      if (this.redisAvailable && this.redisClient) {
+      const redisClient = this.redisService.getClient();
+      if (this.redisService.isReady() && redisClient) {
         try {
-          await this.redisClient.set(`post_comments:${postId}`, count);
+          await redisClient.set(`post_comments:${postId}`, count);
           return;
         } catch (error) {
           this.logger.error(`Redis set count error: ${error.message}`);
@@ -160,9 +128,10 @@ export class CommentCounterService {
   // Xóa counter
   async removeCount(postId: number): Promise<void> {
     try {
-      if (this.redisAvailable && this.redisClient) {
+      const redisClient = this.redisService.getClient();
+      if (this.redisService.isReady() && redisClient) {
         try {
-          await this.redisClient.del(`post_comments:${postId}`);
+          await redisClient.del(`post_comments:${postId}`);
         } catch (error) {
           this.logger.error(`Redis remove count error: ${error.message}`);
         }

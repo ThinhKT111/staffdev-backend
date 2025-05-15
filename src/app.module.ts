@@ -68,10 +68,19 @@ import { DashboardModule } from './dashboard/dashboard.module';
           try {
             const Redis = require('redis');
             const client = Redis.createClient({
-              host: redisHost,
-              port: redisPort,
               socket: {
-                connectTimeout: 1000, // Giảm timeout xuống 1 giây
+                host: redisHost,
+                port: parseInt(redisPort),
+                connectTimeout: 5000, // Tăng timeout lên 5 giây
+              },
+              // Cấu hình thêm để tăng độ ổn định
+              retryStrategy: (times) => {
+                // Retry tối đa 5 lần, mỗi lần cách nhau 200ms * số lần thử
+                if (times > 5) {
+                  console.warn('Redis connection failed after 5 retries, falling back to memory store');
+                  return null;
+                }
+                return Math.min(times * 200, 3000);
               }
             });
             
@@ -81,8 +90,10 @@ import { DashboardModule } from './dashboard/dashboard.module';
                 console.log('Redis connected successfully, using Redis store');
                 resolve({
                   store: redisStore,
-                  host: redisHost,
-                  port: redisPort,
+                  socket: {
+                    host: redisHost,
+                    port: parseInt(redisPort),
+                  },
                   ttl: 60 * 60, // 1 giờ mặc định
                   max: 1000, // Số lượng items tối đa trong cache
                 });
@@ -96,7 +107,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
                 });
               });
               
-              // Timeout sau 1 giây
+              // Timeout sau 5 giây
               setTimeout(() => {
                 try {
                   client.quit().catch(() => {}); // Bắt lỗi nếu client đã đóng
@@ -108,7 +119,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
                   ttl: 60 * 60, // 1 giờ mặc định
                   max: 1000, // Số lượng items tối đa trong cache
                 });
-              }, 1000);
+              }, 5000);
             });
           } catch (error) {
             console.warn(`Error initializing Redis: ${error.message}, falling back to memory store`);
