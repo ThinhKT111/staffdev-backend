@@ -120,14 +120,26 @@ export class AttendanceService {
   }
 
   async requestLeave(leaveDto: RequestLeaveDto): Promise<Attendance> {
-    const leaveDate = new Date(leaveDto.date);
-    leaveDate.setHours(0, 0, 0, 0);
+    // Support both camelCase (leaveType, date) and snake_case (leave_type, leave_date) fields
+    const leaveType = leaveDto.leaveType || leaveDto.leave_type;
+    const leaveDate = leaveDto.date || leaveDto.leave_date;
+    
+    if (!leaveType || !leaveDate) {
+      throw new BadRequestException('Leave type and date are required');
+    }
+    
+    const parsedDate = new Date(leaveDate);
+    if (isNaN(parsedDate.getTime())) {
+      throw new BadRequestException('Invalid leave date format');
+    }
+    
+    parsedDate.setHours(0, 0, 0, 0);
     
     // Check if already has a leave request for this date
     const existingRequest = await this.attendanceRepository.findOne({
       where: {
         user_id: leaveDto.userId,
-        leave_date: Between(leaveDate, new Date(leaveDate.getTime() + 24 * 60 * 60 * 1000))
+        leave_date: Between(parsedDate, new Date(parsedDate.getTime() + 24 * 60 * 60 * 1000))
       },
     });
     
@@ -135,12 +147,12 @@ export class AttendanceService {
       throw new BadRequestException('Leave request for this date already exists');
     }
     
-    // Create new leave request
+    // Create new leave request without explicitly setting attendance_id
     const attendance = this.attendanceRepository.create({
       user_id: leaveDto.userId,
-      leave_type: leaveDto.leaveType as LeaveType,
-      leave_date: leaveDate,
-      note: leaveDto.reason,
+      leave_type: leaveType as LeaveType,
+      leave_date: parsedDate,
+      note: leaveDto.note, // Using note field from DTO
       status: AttendanceStatus.PENDING,
     });
     

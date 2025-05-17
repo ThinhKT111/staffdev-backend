@@ -21,6 +21,9 @@ export class AuthController {
   @RateLimit(5, 60) // 5 requests/minute
   @Post('login')
   async login(@Request() req, @Body() loginDto: LoginDto, @Body('token2FA') token2FA?: string) {
+    if (!req.user) {
+      throw new UnauthorizedException('Xác thực thất bại');
+    }
     return this.authService.login(req.user, token2FA);
   }
 
@@ -51,8 +54,15 @@ export class AuthController {
   @Patch('change-password')
   @UseGuards(JwtAuthGuard)
   async changePassword(@Request() req, @Body() changePasswordDto: ChangePasswordDto) {
+    const userId = req.user.userId || req.user.sub;
+    
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (!userId || isNaN(+userId)) {
+      throw new UnauthorizedException('User ID không hợp lệ');
+    }
+    
     return this.authService.changePassword(
-      req.user.userId,
+      +userId,
       changePasswordDto.currentPassword,
       changePasswordDto.newPassword
     );
@@ -61,6 +71,10 @@ export class AuthController {
   @UseGuards(LocalAuthGuard)
   @Post('login-with-device')
   async loginWithDevice(@Request() req, @Body() loginDeviceDto: LoginWithDeviceDto) {
+    if (!req.user) {
+      throw new UnauthorizedException('Xác thực thất bại');
+    }
+    
     const result = await this.authService.login(req.user);
     
     // Lưu thông tin thiết bị nếu có
@@ -95,7 +109,14 @@ export class AuthController {
   @Post('device/logout')
   @UseGuards(JwtAuthGuard)
   async logoutFromDevice(@Request() req, @Body('deviceId') deviceId: string) {
-    const success = await this.authService.logoutFromDevice(req.user.userId, deviceId);
+    const userId = req.user.userId || req.user.sub;
+    
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (!userId || isNaN(+userId)) {
+      throw new UnauthorizedException('User ID không hợp lệ');
+    }
+    
+    const success = await this.authService.logoutFromDevice(+userId, deviceId);
     
     return {
       success,
@@ -106,7 +127,14 @@ export class AuthController {
   @Post('devices')
   @UseGuards(JwtAuthGuard)
   async getUserDevices(@Request() req) {
-    const devices = await this.authService.getUserDevices(req.user.userId);
+    const userId = req.user.userId || req.user.sub;
+    
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (!userId || isNaN(+userId)) {
+      throw new UnauthorizedException('User ID không hợp lệ');
+    }
+    
+    const devices = await this.authService.getUserDevices(+userId);
     
     return { devices };
   }

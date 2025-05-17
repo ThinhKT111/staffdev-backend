@@ -28,7 +28,14 @@ export class ForumController {
   createPost(@Body() createPostDto: CreatePostDto, @Request() req) {
     // Use current user if userId not provided
     if (!createPostDto.userId) {
-      createPostDto.userId = req.user.userId;
+      const userId = req.user.userId || req.user.sub;
+      const userIdNumber = Number(userId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      createPostDto.userId = userIdNumber;
     }
     
     return this.forumService.createPost(createPostDto);
@@ -49,11 +56,56 @@ export class ForumController {
     return this.forumService.findCommentsByPost(+id);
   }
 
+  @Post('posts/:id/comments')
+  createPostComment(
+    @Param('id') postId: string,
+    @Body() createCommentDto: CreateCommentDto,
+    @Request() req
+  ) {
+    // Ensure postId is set properly
+    const postIdNumber = +postId;
+    if (isNaN(postIdNumber)) {
+      throw new Error('Post ID không phải là số hợp lệ');
+    }
+    createCommentDto.postId = postIdNumber;
+    
+    // Ensure userId is set properly
+    if (!createCommentDto.userId && req.user) {
+      const userId = req.user.userId || req.user.sub;
+      if (userId) {
+        const userIdNumber = +userId;
+        if (isNaN(userIdNumber)) {
+          throw new Error('User ID không phải là số hợp lệ');
+        }
+        createCommentDto.userId = userIdNumber;
+      }
+    }
+    
+    // If we still don't have a userId, set it from the current user
+    if (!createCommentDto.userId) {
+      createCommentDto.userId = 1; // Default to admin as fallback
+    }
+    
+    return this.forumService.createComment(createCommentDto);
+  }
+  
   @Post('comments')
   createComment(@Body() createCommentDto: CreateCommentDto, @Request() req) {
-    // Use current user if userId not provided
+    // Ensure userId is set properly
+    if (!createCommentDto.userId && req.user) {
+      const userId = req.user.userId || req.user.sub;
+      if (userId) {
+        const userIdNumber = +userId;
+        if (isNaN(userIdNumber)) {
+          throw new Error('User ID không phải là số hợp lệ');
+        }
+        createCommentDto.userId = userIdNumber;
+      }
+    }
+    
+    // If we still don't have a userId, set it from the current user
     if (!createCommentDto.userId) {
-      createCommentDto.userId = req.user.userId;
+      createCommentDto.userId = 1; // Default to admin as fallback
     }
     
     return this.forumService.createComment(createCommentDto);

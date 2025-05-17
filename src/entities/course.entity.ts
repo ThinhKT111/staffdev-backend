@@ -17,7 +17,7 @@ export enum CourseLevel {
   ADVANCED = 'advanced',
 }
 
-@Entity('training_courses')
+@Entity('trainingcourses')
 export class Course {
   @PrimaryGeneratedColumn('increment')
   course_id: number;

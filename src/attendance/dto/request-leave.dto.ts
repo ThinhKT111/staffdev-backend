@@ -1,10 +1,10 @@
 // src/attendance/dto/request-leave.dto.ts
-import { IsNotEmpty, IsNumber, IsString, IsDateString } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsString, IsDateString, IsOptional } from 'class-validator';
 
 export class RequestLeaveDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsNumber()
-  userId: number;
+  userId?: number;
 
   @IsNotEmpty()
   @IsString()
@@ -14,7 +14,28 @@ export class RequestLeaveDto {
   @IsDateString()
   date: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  reason: string;
+  note?: string;
+
+  // Thêm trường để tương thích với test-api.js
+  @IsOptional()
+  @IsString()
+  get leave_type(): string {
+    return this.leaveType;
+  }
+
+  set leave_type(value: string) {
+    this.leaveType = value as any;
+  }
+
+  @IsOptional()
+  @IsString()
+  get leave_date(): string {
+    return this.date;
+  }
+
+  set leave_date(value: string) {
+    this.date = value;
+  }
 }

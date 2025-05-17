@@ -27,6 +27,19 @@ export class TasksController {
     return this.tasksService.findAll();
   }
 
+  @Get('me')
+  findMyTasks(@Request() req) {
+    // Lấy userId từ JWT payload - có thể là req.user.userId hoặc req.user.sub
+    const userId = req.user.userId || req.user.sub;
+    
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (!userId || isNaN(+userId)) {
+      throw new Error('User ID không hợp lệ');
+    }
+    
+    return this.tasksService.findByAssignedTo(+userId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.tasksService.findOne(+id);
@@ -36,7 +49,14 @@ export class TasksController {
   create(@Body() createTaskDto: CreateTaskDto, @Request() req) {
     // Set the current user as the assigner if not specified
     if (!createTaskDto.assignedBy) {
-      createTaskDto.assignedBy = req.user.userId;
+      const userId = req.user.userId || req.user.sub;
+      const userIdNumber = Number(userId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      createTaskDto.assignedBy = userIdNumber;
     }
     
     return this.tasksService.create(createTaskDto);
@@ -69,7 +89,14 @@ export class TasksController {
   // Endpoint mới: Lấy tổng quan nhiệm vụ
   @Get('summary/me')
   async getMySummary(@Request() req) {
-    await this.tasksService.sendTaskSummary(req.user.userId);
+    const userId = req.user.userId || req.user.sub;
+    const userIdNumber = Number(userId);
+    
+    if (isNaN(userIdNumber)) {
+      throw new Error('User ID không phải là số hợp lệ');
+    }
+    
+    await this.tasksService.sendTaskSummary(userIdNumber);
     return { message: 'Task summary notification has been sent' };
   }
   

@@ -116,14 +116,14 @@ export class ForumService implements OnModuleInit {
 
   async createPost(createPostDto: CreatePostDto): Promise<ForumPost> {
     try {
+      // Create a post entity without explicitly setting post_id
       const post = this.postsRepository.create({
         title: createPostDto.title,
         content: createPostDto.content,
         user_id: createPostDto.userId,
-        created_at: new Date(),
-        updated_at: new Date(),
       });
       
+      // Let PostgreSQL generate the new post_id using the BIGSERIAL sequence
       const savedPost = await this.postsRepository.save(post);
       
       // Khởi tạo comment counter cho bài viết mới

@@ -8,15 +8,16 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { authenticator } from 'otplib';
 import * as QRCode from 'qrcode';
 import { User } from '../entities/user.entity';
+import { FileUploadService } from '../shared/file-upload.service';
 
 @Injectable()
 export class ProfilesService {
-  fileUploadService: any;
   constructor(
     @InjectRepository(Profile)
     private profilesRepository: Repository<Profile>,
     @InjectRepository(User)
-    private userRepository: Repository<User>
+    private userRepository: Repository<User>,
+    private fileUploadService: FileUploadService
   ) {}
 
   async findAll(): Promise<Profile[]> {
@@ -43,6 +44,11 @@ export class ProfilesService {
   }
 
   async findByUser(userId: number): Promise<Profile> {
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (userId === undefined || userId === null || isNaN(userId)) {
+      throw new BadRequestException(`Invalid user ID: ${userId}`);
+    }
+    
     const profile = await this.profilesRepository.findOne({
       where: { user_id: userId },
       relations: ['user'],
@@ -56,9 +62,15 @@ export class ProfilesService {
   }
 
   async create(createProfileDto: CreateProfileDto): Promise<Profile> {
+    // Đảm bảo userId là số nguyên hợp lệ
+    const userId = Number(createProfileDto.userId);
+    if (isNaN(userId)) {
+      throw new BadRequestException(`Invalid user ID: ${createProfileDto.userId}`);
+    }
+    
     // Sử dụng kiểu any để tránh lỗi DeepPartial
     const profileData: any = {
-      user_id: createProfileDto.userId,
+      user_id: userId,
       date_of_birth: createProfileDto.dateOfBirth ? new Date(createProfileDto.dateOfBirth) : undefined,
       address: createProfileDto.address,
       experience: createProfileDto.experience,
@@ -96,11 +108,26 @@ export class ProfilesService {
   }
 
   async updateByUserId(userId: number, updateProfileDto: UpdateProfileDto): Promise<Profile> {
-    const profile = await this.findByUser(userId);
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (userId === undefined || userId === null) {
+      throw new BadRequestException('User ID không được để trống');
+    }
+    
+    const userIdNumber = Number(userId);
+    if (isNaN(userIdNumber)) {
+      throw new BadRequestException(`User ID không phải là số hợp lệ: ${userId}`);
+    }
+    
+    const profile = await this.findByUser(userIdNumber);
     return this.update(profile.profile_id, updateProfileDto);
   }
 
   async updateAvatar(userId: number, file: Express.Multer.File): Promise<Profile> {
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (userId === undefined || userId === null || isNaN(userId)) {
+      throw new BadRequestException(`Invalid user ID: ${userId}`);
+    }
+    
     const profile = await this.findByUser(userId);
     
     // Xóa avatar cũ nếu có
@@ -128,6 +155,11 @@ export class ProfilesService {
   }
 
   async enable2FA(userId: number): Promise<any> {
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (userId === undefined || userId === null || isNaN(userId)) {
+      throw new BadRequestException(`Invalid user ID: ${userId}`);
+    }
+    
     const profile = await this.findByUser(userId);
     
     // Tạo secret key
@@ -160,6 +192,11 @@ export class ProfilesService {
   }
   
   async verify2FA(userId: number, token: string): Promise<boolean> {
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (userId === undefined || userId === null || isNaN(userId)) {
+      throw new BadRequestException(`Invalid user ID: ${userId}`);
+    }
+    
     const profile = await this.findByUser(userId);
     
     // Lấy secret key từ profile
@@ -167,14 +204,31 @@ export class ProfilesService {
       throw new BadRequestException('Tính năng 2FA chưa được thiết lập');
     }
     
+    // Cải thiện regex để bắt đúng định dạng JSON trong chuỗi skills
     const match = profile.skills.match(/2FA:({.*?})/);
-    if (!match) {
+    if (!match || !match[1]) {
       throw new BadRequestException('Dữ liệu 2FA không hợp lệ');
     }
     
     try {
-      const twoFAData = JSON.parse(match[1]);
+      // Xử lý chuỗi JSON an toàn hơn
+      let twoFAData;
+      try {
+        twoFAData = JSON.parse(match[1]);
+      } catch (e) {
+        throw new BadRequestException('Dữ liệu 2FA không phải định dạng JSON hợp lệ');
+      }
+      
+      if (!twoFAData.secret) {
+        throw new BadRequestException('Secret key không tồn tại trong dữ liệu 2FA');
+      }
+      
       const { secret } = twoFAData;
+      
+      // Đảm bảo token là chuỗi và chỉ chứa số
+      if (!token || typeof token !== 'string' || !/^\d+$/.test(token)) {
+        throw new BadRequestException('Token không hợp lệ');
+      }
       
       // Xác thực token
       const isValid = authenticator.verify({ token, secret });
@@ -182,17 +236,28 @@ export class ProfilesService {
       // Nếu đây là lần xác thực đầu tiên, bật 2FA
       if (isValid && !twoFAData.enabled) {
         twoFAData.enabled = true;
-        profile.skills = profile.skills.replace(match[0], `2FA:${JSON.stringify(twoFAData)}`);
+        const updatedSkills = profile.skills.replace(match[0], `2FA:${JSON.stringify(twoFAData)}`);
+        profile.skills = updatedSkills;
         await this.profilesRepository.save(profile);
       }
       
       return isValid;
     } catch (error) {
+      // Ghi log lỗi
+      console.error('Lỗi xác thực 2FA:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException('Lỗi xác thực token');
     }
   }
   
   async disable2FA(userId: number, token: string): Promise<any> {
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (userId === undefined || userId === null || isNaN(userId)) {
+      throw new BadRequestException(`Invalid user ID: ${userId}`);
+    }
+    
     const profile = await this.findByUser(userId);
     
     // Xác thực token trước khi tắt 2FA

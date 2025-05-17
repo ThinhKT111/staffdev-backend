@@ -142,9 +142,7 @@ export class ElasticsearchService {
   }
 
   async indexTask(task: Task): Promise<void> {
-    try {
-      if (!this.isElasticsearchAvailable) return;
-      
+    await this.withFallback(async () => {
       await this.esService.index({
         index: this.taskIndex,
         id: task.task_id.toString(),
@@ -158,15 +156,12 @@ export class ElasticsearchService {
           updated_at: task.updated_at,
         },
       });
-    } catch (error) {
-      this.logger.error(`Error indexing task ${task.task_id}`, error);
-    }
+      return true;
+    }, false);
   }
 
   async indexNotification(notification: Notification): Promise<void> {
-    try {
-      if (!this.isElasticsearchAvailable) return;
-      
+    await this.withFallback(async () => {
       await this.esService.index({
         index: this.notificationIndex,
         id: notification.notification_id.toString(),
@@ -179,22 +174,18 @@ export class ElasticsearchService {
           created_at: notification.created_at,
         },
       });
-    } catch (error) {
-      this.logger.error(`Error indexing notification ${notification.notification_id}`, error);
-    }
+      return true;
+    }, false);
   }
 
   async removeNotificationFromIndex(notificationId: number): Promise<void> {
-    try {
-      if (!this.isElasticsearchAvailable) return;
-      
+    await this.withFallback(async () => {
       await this.esService.delete({
         index: this.notificationIndex,
         id: notificationId.toString(),
       });
-    } catch (error) {
-      this.logger.error(`Error removing notification ${notificationId} from index`, error);
-    }
+      return true;
+    }, false);
   }
 
   async searchTasks(
@@ -205,11 +196,7 @@ export class ElasticsearchService {
     page = 1,
     limit = 10
   ): Promise<SearchTasksResult> {
-    try {
-      if (!this.isElasticsearchAvailable) {
-        return { totalCount: 0, items: [] };
-      }
-      
+    return this.withFallback(async () => {
       const from = (page - 1) * limit;
 
       // Build search query
@@ -260,7 +247,7 @@ export class ElasticsearchService {
       const response = await this.esService.search({
         index: this.taskIndex,
         query: searchQuery,
-        sort: [{ deadline: { order: 'asc' } }],
+        sort: [{ updated_at: { order: 'desc' } }],
         from,
         size: limit,
       });
@@ -287,13 +274,7 @@ export class ElasticsearchService {
         totalCount,
         items,
       };
-    } catch (error) {
-      this.logger.error('Error searching tasks', error);
-      return {
-        totalCount: 0,
-        items: [],
-      };
-    }
+    }, { totalCount: 0, items: [] });
   }
 
   async searchDocuments(
@@ -302,11 +283,7 @@ export class ElasticsearchService {
     page = 1,
     limit = 10
   ): Promise<SearchDocumentsResult> {
-    try {
-      if (!this.isElasticsearchAvailable) {
-        return { totalCount: 0, items: [] };
-      }
-      
+    return this.withFallback(async () => {
       const from = (page - 1) * limit;
 
       // Build search query
@@ -367,21 +344,11 @@ export class ElasticsearchService {
         totalCount,
         items,
       };
-    } catch (error) {
-      this.logger.error('Error searching documents', error);
-      return {
-        totalCount: 0,
-        items: [],
-      };
-    }
+    }, { totalCount: 0, items: [] });
   }
 
   async getDocumentStatistics(): Promise<any> {
-    try {
-      if (!this.isElasticsearchAvailable) {
-        return { categories: [], recentDocuments: [] };
-      }
-      
+    return this.withFallback(async () => {
       const response = await this.esService.search({
         index: this.documentIndex,
         size: 0,
@@ -424,13 +391,7 @@ export class ElasticsearchService {
         })),
         recentDocuments: recent,
       };
-    } catch (error) {
-      this.logger.error('Error getting document statistics', error);
-      return {
-        categories: [],
-        recentDocuments: [],
-      };
-    }
+    }, { categories: [], recentDocuments: [] });
   }
 
   async searchNotifications(
@@ -438,11 +399,7 @@ export class ElasticsearchService {
     page = 1,
     limit = 10
   ): Promise<SearchNotificationsResult> {
-    try {
-      if (!this.isElasticsearchAvailable) {
-        return { totalCount: 0, items: [] };
-      }
-      
+    return this.withFallback(async () => {
       const from = (page - 1) * limit;
 
       const searchQuery = query ? {
@@ -482,22 +439,36 @@ export class ElasticsearchService {
         totalCount,
         items,
       };
-    } catch (error) {
-      this.logger.error('Error searching notifications', error);
-      return {
-        totalCount: 0,
-        items: [],
-      };
-    }
+    }, { totalCount: 0, items: [] });
   }
 
   async checkHealth(): Promise<boolean> {
     try {
-      const health = await this.esService.cluster.health();
+      const health = await this.esService.cluster.health({
+        timeout: '5s'
+      });
       return health.status !== 'red';
     } catch (error) {
-      this.logger.error('Elasticsearch health check failed', error);
+      this.logger.warn('Elasticsearch health check failed, service will run in fallback mode', error.message);
       return false;
+    }
+  }
+
+  private async withFallback<T>(operation: () => Promise<T>, defaultValue: T): Promise<T> {
+    if (!this.isElasticsearchAvailable) {
+      return defaultValue;
+    }
+    
+    try {
+      return await operation();
+    } catch (error) {
+      if (error.name === 'ConnectionError') {
+        this.isElasticsearchAvailable = false;
+        this.logger.warn('Elasticsearch connection lost, switching to fallback mode');
+      } else {
+        this.logger.error('Elasticsearch operation failed', error);
+      }
+      return defaultValue;
     }
   }
 }

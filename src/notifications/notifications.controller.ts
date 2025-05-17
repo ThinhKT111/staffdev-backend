@@ -15,9 +15,18 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Get()
-  findAll(@Query('userId') userId?: string) {
+  findAll(@Query('userId') userId?: string, @NestRequest() req?: any) {
     if (userId) {
       return this.notificationsService.findByUser(+userId);
+    } else if (req?.user) {
+      const currentUserId = req.user.userId || req.user.sub;
+      const userIdNumber = Number(currentUserId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      return this.notificationsService.findByUser(userIdNumber);
     }
     
     return this.notificationsService.findAll();
@@ -50,6 +59,18 @@ export class NotificationsController {
   @Post('user/:userId/mark-all-read')
   markAllAsRead(@Param('userId') userId: string) {
     return this.notificationsService.markAllAsRead(+userId);
+  }
+  
+  @Patch('read-all')
+  markAllAsReadForCurrentUser(@NestRequest() req) {
+    const userId = req.user.userId || req.user.sub;
+    const userIdNumber = Number(userId);
+    
+    if (isNaN(userIdNumber)) {
+      throw new Error('User ID không phải là số hợp lệ');
+    }
+    
+    return this.notificationsService.markAllAsRead(userIdNumber);
   }
 
   @Delete(':id')

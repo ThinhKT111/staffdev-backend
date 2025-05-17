@@ -8,10 +8,13 @@ import { CourseController } from './course/course.controller';
 import { TrainingPath } from '../entities/training-path.entity';
 import { Course } from '../entities/course.entity';
 import { UserCourse } from '../entities/user-course.entity';
+import { UserCoursesService } from '../user-courses/user-courses.service';
+import { UserTrainingCoursesController } from '../user-courses/user-courses.controller';
+import { Attendance } from '../entities/attendance.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([TrainingPath, Course, UserCourse])],
-  providers: [TrainingPathService, CourseService],
-  controllers: [TrainingPathController, CourseController]
+  imports: [TypeOrmModule.forFeature([TrainingPath, Course, UserCourse, Attendance])],
+  providers: [TrainingPathService, CourseService, UserCoursesService],
+  controllers: [TrainingPathController, CourseController, UserTrainingCoursesController]
 })
 export class TrainingModule {}

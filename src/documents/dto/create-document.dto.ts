@@ -1,5 +1,5 @@
 // src/documents/dto/create-document.dto.ts
-import { IsNotEmpty, IsString, IsNumber } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsOptional } from 'class-validator';
 
 export class CreateDocumentDto {
   @IsNotEmpty()
@@ -10,7 +10,11 @@ export class CreateDocumentDto {
   @IsString()
   category: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsNumber()
-  uploadedBy: number;
+  uploadedBy?: number;
+
+  @IsOptional()
+  @IsString()
+  file_url?: string;
 }

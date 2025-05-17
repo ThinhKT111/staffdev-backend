@@ -68,8 +68,21 @@ export class DocumentsController {
   @UseInterceptors(FileInterceptor('file'))
   create(
     @Body() createDocumentDto: CreateDocumentDto,
-    @UploadedFile() file: Express.Multer.File,
+    @Req() req: Request,
+    @UploadedFile() file?: Express.Multer.File
   ) {
+    // Nếu không có uploadedBy, sử dụng người dùng hiện tại
+    if (!createDocumentDto.uploadedBy) {
+      const userId = req.user && (req.user['userId'] || req.user['sub']);
+      const userIdNumber = Number(userId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      createDocumentDto.uploadedBy = userIdNumber;
+    }
+    
     return this.documentsService.create(createDocumentDto, file);
   }
 
@@ -124,5 +137,10 @@ export class DocumentsController {
     @Query('limit') limit: number = 10
   ) {
     return this.documentsService.searchDocuments(query, category, limit);
+  }
+
+  @Get('category/:category')
+  findByCategory(@Param('category') category: string) {
+    return this.documentsService.findByCategory(category);
   }
 }

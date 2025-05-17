@@ -138,7 +138,30 @@ node scripts/setup-redis-wsl.js
 
 # Cập nhật cấu hình Redis
 node update-redis-config.js
+
+# Khắc phục lỗi duplicate key khi tạo mới bản ghi
+# Chạy file SQL sau để cập nhật sequence PostgreSQL
+psql -U <username> -d <dbname> -a -f fix-sequences.sql
 ```
+
+## 🔍 Khắc phục sự cố
+
+### Lỗi "duplicate key value violates unique constraint"
+
+Nếu gặp lỗi này khi tạo mới bản ghi, có thể là do sequence trong PostgreSQL không được cập nhật sau khi import dữ liệu. Thực hiện các bước sau để khắc phục:
+
+1. Chạy file SQL để cập nhật sequences:
+   ```bash
+   psql -U <username> -d <dbname> -a -f fix-sequences.sql
+   ```
+
+2. Nếu vẫn gặp lỗi, thử reset sequence thủ công trong psql:
+   ```sql
+   SELECT setval('tasks_task_id_seq', (SELECT MAX(task_id) FROM tasks));
+   SELECT setval('forumposts_post_id_seq', (SELECT MAX(post_id) FROM forumposts));
+   SELECT setval('attendance_attendance_id_seq', (SELECT MAX(attendance_id) FROM attendance));
+   SELECT setval('documents_document_id_seq', (SELECT MAX(document_id) FROM documents));
+   ```
 
 ## 📚 Tài liệu chi tiết
 

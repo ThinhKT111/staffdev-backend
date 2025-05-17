@@ -84,20 +84,33 @@ export class DocumentsService {
     return this.documentsRepository.save(newDocument);
   }
 
-  async create(createDocumentDto: CreateDocumentDto, file: Express.Multer.File): Promise<Document> {
-    // Save file to disk
-    const filePath = await this.fileUploadService.saveFile(file, 'documents');
-    
-    // Create document record
-    const document = this.documentsRepository.create({
-      title: createDocumentDto.title,
-      file_url: filePath,
-      category: createDocumentDto.category,
-      uploaded_by: createDocumentDto.uploadedBy,
-      uploaded_at: new Date(),
-    });
-    
-    return this.documentsRepository.save(document);
+  async create(createDocumentDto: CreateDocumentDto, file?: Express.Multer.File): Promise<Document> {
+    try {
+      let filePath = createDocumentDto.file_url;
+      
+      // Nếu có file upload, lưu file và lấy đường dẫn
+      if (file) {
+        filePath = await this.fileUploadService.saveFile(file, 'documents');
+      }
+      
+      // Kiểm tra nếu không có cả file và file_url
+      if (!filePath) {
+        throw new BadRequestException('Phải cung cấp file hoặc file_url');
+      }
+      
+      // Create document record without specifying document_id to let the database generate it
+      const document = this.documentsRepository.create({
+        title: createDocumentDto.title,
+        file_url: filePath,
+        category: createDocumentDto.category,
+        uploaded_by: createDocumentDto.uploadedBy,
+      });
+      
+      // Let the database use the BIGSERIAL sequence to generate the document_id
+      return await this.documentsRepository.save(document);
+    } catch (error) {
+      throw new Error(`Error creating document: ${error.message}`);
+    }
   }
 
   async update(id: number, updateDocumentDto: UpdateDocumentDto): Promise<Document> {

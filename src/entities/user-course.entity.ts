@@ -9,7 +9,7 @@ export enum CourseStatus {
   COMPLETED = 'Completed',
 }
 
-@Entity('user_courses')
+@Entity('usercourses')
 export class UserCourse {
   @PrimaryGeneratedColumn('increment')
   user_course_id: number;

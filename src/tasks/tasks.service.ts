@@ -71,18 +71,17 @@ export class TasksService {
         status = TaskStatus.PENDING;
     }
 
-    // Create new task
+    // Create new task without specifying task_id to let the database generate it
     const task = this.tasksRepository.create({
       title: createTaskDto.title,
-      description: createTaskDto.description,
+      description: createTaskDto.description || '',
       assigned_to: createTaskDto.assignedTo,
       assigned_by: createTaskDto.assignedBy,
-      deadline: new Date(createTaskDto.deadline),
+      deadline: createTaskDto.deadline ? new Date(createTaskDto.deadline) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Mặc định 7 ngày nếu không có
       status: status,
-      created_at: new Date(),
-      updated_at: new Date(),
     });
     
+    // Let the database use the BIGSERIAL sequence to generate the task_id
     const savedTask = await this.tasksRepository.save(task);
     
     // Gửi thông báo cho người được giao nhiệm vụ

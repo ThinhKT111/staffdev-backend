@@ -57,8 +57,17 @@ export class AuthService {
     }
     
     if (isValidMd5 || isValidBcrypt) {
-      const { password, ...result } = user;
-      return result;
+      // Trả về đầy đủ các trường user cần thiết
+      return {
+        user_id: user.user_id,
+        cccd: user.cccd,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        department_id: user.department_id,
+        phone: user.phone,
+        // các trường khác nếu cần
+      };
     }
     
     return null;
@@ -210,17 +219,29 @@ export class AuthService {
   }
 
   async register(createUserDto: AuthCreateUserDto) {
-    // Kiểm tra xem đã tồn tại user có cccd, email hoặc phone này chưa
-    const existingUser = await this.usersRepository.findOne({
-      where: [
-        { cccd: createUserDto.cccd },
-        { email: createUserDto.email },
-        { phone: createUserDto.phone },
-      ],
+    // Kiểm tra từng trường riêng biệt để cung cấp thông báo lỗi cụ thể
+    const existingByCccd = await this.usersRepository.findOne({
+      where: { cccd: createUserDto.cccd },
     });
     
-    if (existingUser) {
-      throw new ConflictException('CCCD, email hoặc số điện thoại đã được sử dụng');
+    if (existingByCccd) {
+      throw new ConflictException('CCCD đã được sử dụng');
+    }
+    
+    const existingByEmail = await this.usersRepository.findOne({
+      where: { email: createUserDto.email },
+    });
+    
+    if (existingByEmail) {
+      throw new ConflictException('Email đã được sử dụng');
+    }
+    
+    const existingByPhone = await this.usersRepository.findOne({
+      where: { phone: createUserDto.phone },
+    });
+    
+    if (existingByPhone) {
+      throw new ConflictException('Số điện thoại đã được sử dụng');
     }
     
     // Hash mật khẩu
@@ -242,19 +263,27 @@ export class AuthService {
       updated_at: new Date(),
     });
     
-    const savedUser = await this.usersRepository.save(user);
-    
-    // Tạo profile cho người dùng
-    const profile = this.profileRepository.create({
-      user_id: savedUser.user_id,
-      updated_at: new Date()
-    });
-    
-    await this.profileRepository.save(profile);
-    
-    // Không trả về mật khẩu
-    const { password, ...result } = savedUser;
-    return result;
+    try {
+      const savedUser = await this.usersRepository.save(user);
+      
+      // Tạo profile cho người dùng
+      const profile = this.profileRepository.create({
+        user_id: savedUser.user_id,
+        updated_at: new Date()
+      });
+      
+      await this.profileRepository.save(profile);
+      
+      // Không trả về mật khẩu
+      const { password, ...result } = savedUser;
+      return result;
+    } catch (error) {
+      // Xử lý lỗi khi lưu vào database
+      if (error.code === '23505') { // PostgreSQL unique violation error code
+        throw new ConflictException('Đã xảy ra lỗi trùng lặp dữ liệu');
+      }
+      throw error;
+    }
   }
 
   async login(user: any, token2FA?: string) {
@@ -263,8 +292,21 @@ export class AuthService {
       where: { user_id: user.user_id }
     });
     
-    const has2FA = profile?.skills && profile.skills.includes('2FA:') && 
-      profile.skills.includes('"enabled":true');
+    // Cải thiện cách kiểm tra trạng thái 2FA
+    let has2FA = false;
+    
+    if (profile?.skills && profile.skills.includes('2FA:')) {
+      // Tìm chuỗi JSON trong 2FA
+      const match = profile.skills.match(/2FA:({.*?})/);
+      if (match && match[1]) {
+        try {
+          const twoFAData = JSON.parse(match[1]);
+          has2FA = twoFAData.enabled === true;
+        } catch (e) {
+          console.error('Lỗi phân tích dữ liệu 2FA:', e);
+        }
+      }
+    }
     
     if (has2FA && !token2FA) {
       // Yêu cầu mã 2FA
@@ -277,15 +319,20 @@ export class AuthService {
     
     if (has2FA && token2FA) {
       // Xác thực 2FA
-      const isValid = await this.profileService.verify2FA(user.user_id, token2FA);
-      if (!isValid) {
-        throw new UnauthorizedException('Mã xác thực 2FA không hợp lệ');
+      try {
+        const isValid = await this.profileService.verify2FA(user.user_id, token2FA);
+        if (!isValid) {
+          throw new UnauthorizedException('Mã xác thực 2FA không hợp lệ');
+        }
+      } catch (error) {
+        console.error('Lỗi xác thực 2FA:', error);
+        throw new UnauthorizedException('Xác thực 2FA thất bại: ' + (error.message || 'Lỗi không xác định'));
       }
     }
     
     // Đăng nhập thành công, tạo JWT sử dụng RedisJwtService
     const payload = { 
-      sub: user.userId, 
+      sub: user.user_id,
       cccd: user.cccd,
       role: user.role 
     };
@@ -295,12 +342,13 @@ export class AuthService {
     return {
       access_token,
       user: {
-        id: user.user_id,
+        userId: user.user_id,
         cccd: user.cccd,
         email: user.email,
         fullName: user.full_name,
         role: user.role,
         departmentId: user.department_id,
+        phone: user.phone,
         has2FA
       }
     };

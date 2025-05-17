@@ -101,3 +101,21 @@ export class UserCoursesController {
     return this.userCoursesService.getEnrollmentStatistics(+courseId);
   }
 }
+
+@Controller('training/me/courses')
+@UseGuards(JwtAuthGuard)
+export class UserTrainingCoursesController {
+  constructor(private readonly userCoursesService: UserCoursesService) {}
+
+  @Get()
+  findMyCoursesRerouting(@Request() req) {
+    const userId = req.user.userId || req.user.sub;
+    const userIdNumber = Number(userId);
+    
+    if (isNaN(userIdNumber)) {
+      throw new Error('User ID không phải là số hợp lệ');
+    }
+    
+    return this.userCoursesService.findByUser(userIdNumber);
+  }
+}

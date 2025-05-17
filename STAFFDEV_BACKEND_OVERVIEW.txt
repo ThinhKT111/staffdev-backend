@@ -1,0 +1,773 @@
+============================================================
+                STAFFDEV BACKEND - PHÂN TÍCH CHI TIẾT
+============================================================
+
+*** MỤC LỤC ***
+
+1. TỔNG QUAN HỆ THỐNG
+2. KIẾN TRÚC HỆ THỐNG
+3. CÔNG NGHỆ SỬ DỤNG
+4. CÁC MODULE CHÍNH & CHỨC NĂNG
+5. DATABASE SCHEMA
+6. API ENDPOINTS QUAN TRỌNG
+7. REAL-TIME FEATURES (WEBSOCKET)
+8. AUTHENTICATION & AUTHORIZATION
+9. PERFORMANCE OPTIMIZATIONS
+10. ĐIỂM MẠNH KỸ THUẬT
+
+============================================================
+1. TỔNG QUAN HỆ THỐNG
+============================================================
+
+StaffDev là hệ thống backend hoàn chỉnh cho ứng dụng quản lý và phát triển nhân viên, được xây dựng dành cho doanh nghiệp hiện đại. Hệ thống cung cấp đầy đủ các chức năng từ quản lý nhân sự, đào tạo, tác vụ, diễn đàn trao đổi, đến thông báo real-time và dashboard phân tích dữ liệu.
+
+Mục tiêu chính của hệ thống:
+- Tập trung hóa quản lý thông tin nhân sự
+- Tạo môi trường phát triển nhân viên có hệ thống
+- Tối ưu hóa quy trình giao và theo dõi công việc
+- Tăng cường giao tiếp nội bộ và chia sẻ kiến thức
+- Cung cấp dữ liệu phân tích cho nhà quản lý
+
+Điểm nổi bật:
+- Kiến trúc module hóa, dễ mở rộng
+- Tích hợp đầy đủ các công nghệ hiện đại (NestJS, PostgreSQL, Redis, Elasticsearch)
+- Thông báo real-time qua WebSockets
+- Hệ thống tìm kiếm mạnh mẽ với full-text search
+- API Documentation đầy đủ với Swagger
+- Cache thông minh và rate limiting bảo vệ hệ thống
+
+============================================================
+2. KIẾN TRÚC HỆ THỐNG
+============================================================
+
+StaffDev Backend sử dụng kiến trúc module hóa của NestJS, tuân theo nguyên tắc thiết kế SOLID và mô hình 3-layer architecture:
+
+A. Cấu trúc tổng quan:
+   - Controllers: Xử lý HTTP requests
+   - Services: Xử lý business logic
+   - Repositories: Tương tác với database
+   - Entities: Mô hình dữ liệu
+   - DTOs: Data Transfer Objects
+   - Guards: Xác thực và phân quyền
+
+B. Module hóa:
+   1. Core modules:
+      - Auth: Xác thực, JWT, role-based access control
+      - Users: Quản lý người dùng hệ thống
+      - Profiles: Thông tin cá nhân người dùng
+      - Shared: Các tiện ích dùng chung
+
+   2. Organization modules:
+      - Departments: Quản lý phòng ban, cấu trúc tổ chức
+      - Training: Quản lý khóa học và lộ trình đào tạo
+      - UserCourses: Kết nối User với Course, tracking tiến độ
+
+   3. Task management:
+      - Tasks: Quản lý nhiệm vụ, công việc
+      - Assignments: Phân công nhiệm vụ
+      - Attendance: Theo dõi điểm danh, nghỉ phép
+
+   4. Content modules:
+      - Forum: Diễn đàn trao đổi nội bộ
+      - Documents: Quản lý tài liệu, mẫu văn bản
+
+   5. Integration modules:
+      - Notifications: Hệ thống thông báo (WebSocket)
+      - Dashboard: Thống kê, báo cáo tổng hợp
+      - Search: Tìm kiếm nâng cao với Elasticsearch
+
+C. Kiến trúc luồng dữ liệu:
+   1. Client -> HTTP Request -> Controller
+   2. Controller -> Validate DTO -> Service
+   3. Service -> Business Logic -> Repository
+   4. Repository -> Database Interaction -> Entities
+   5. Service -> Transform Result -> Controller
+   6. Controller -> HTTP Response -> Client
+┌─────────────────────────────────────────────────────────────────┐
+│                        Client Applications                       │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────┼─────────────────────────────────┐
+│                         NestJS Backend                           │
+│  ┌─────────────┐  ┌───────────┴────────────┐  ┌──────────────┐  │
+│  │  Auth/Users │  │  Business Logic Modules │  │  Common Utils │  │
+│  └─────────────┘  └────────────────────────┘  └──────────────┘  │
+└──────┬─────────────────────┬──────────────────────┬─────────────┘
+       │                     │                      │
+┌──────┴──────────┐  ┌──────┴──────────┐   ┌───────┴────────┐
+│  PostgreSQL DB  │  │  Redis Cache    │   │  Elasticsearch │
+└─────────────────┘  └─────────────────┘   └────────────────┘
+
+============================================================
+3. CÔNG NGHỆ SỬ DỤNG
+============================================================
+
+A. Core Technologies:
+   
+   1. NestJS (v9.0.0)
+      - Framework backend Node.js
+      - Sử dụng TypeScript với decorators
+      - Dependency Injection container
+      - Module hóa ứng dụng
+      - Middleware system linh hoạt
+      - Pipes cho validation
+      - Guards cho auth
+      - Interceptors cho transform response
+
+   2. TypeScript (v4.9.3)
+      - Static typing
+      - Interface, Generic types
+      - Decorators cho metadata
+      - OOP đầy đủ
+
+   3. PostgreSQL (v16.8)
+      - Hệ quản trị CSDL quan hệ mạnh mẽ
+      - Foreign key constraints
+      - Transactions support
+      - Complex queries
+      - Indexing
+
+B. Auxiliary Technologies:
+
+   1. Redis (v7.0.15)
+      - In-memory data store
+      - Cache layer (giảm database load)
+      - Session storage
+      - Rate limiting
+      - Pub/Sub cho WebSocket notifications
+      - Queue management
+      - Data counters (comment counts, notification counts)
+
+   2. Elasticsearch (v9.0.0)
+      - Full-text search engine
+      - Fuzzy search
+      - Aggregations
+      - Vietnamese analyzer 
+      - Index dữ liệu từ nhiều nguồn (forums, documents, tasks)
+
+   3. TypeORM
+      - ORM cho TypeScript
+      - Repository pattern
+      - Entity-Relationship mapping
+      - Migration system
+      - Query builder
+
+   4. Socket.io
+      - WebSocket server
+      - Realtime communication
+      - Room-based messaging
+      - Authentication integration
+      - Fallback to HTTP long-polling
+
+C. Security & Authentication:
+
+   1. JWT (JSON Web Tokens)
+      - Stateless authentication
+      - Refresh token rotation
+      - Role-based access control
+
+   2. bcrypt
+      - Password hashing
+      - Salting
+
+   3. Rate Limiting
+      - IP-based rate limiting
+      - User-based rate limiting
+      - Route-specific limits
+
+D. Development & Documentation:
+
+   1. Swagger/OpenAPI
+      - API Documentation
+      - Testing interface
+      - Schema generation
+
+   2. Jest
+      - Unit testing
+      - Integration testing
+      - Mock services
+
+============================================================
+4. CÁC MODULE CHÍNH & CHỨC NĂNG
+============================================================
+
+A. AUTH MODULE:
+   - Chức năng: Xác thực và phân quyền người dùng
+   - Công nghệ: JWT, bcrypt, Passport.js
+   - Tính năng chính:
+     * Login/Register với email/password
+     * JWT authentication với access token & refresh token
+     * Two-factor authentication (2FA)
+     * Role-based access control (RBAC)
+     * Password reset flow
+     * Device-based authentication
+     * Login session management
+
+B. USERS & PROFILES MODULE:
+   - Chức năng: Quản lý thông tin người dùng và hồ sơ cá nhân
+   - Công nghệ: TypeORM, PostgreSQL
+   - Tính năng chính:
+     * CRUD operations cho user
+     * Profile management với thông tin mở rộng
+     * Avatar upload và management
+     * Role management (Admin, Employee, TeamLeader, SeniorManager)
+     * Department assignment
+     * Account status tracking
+
+C. DEPARTMENTS MODULE:
+   - Chức năng: Quản lý cấu trúc tổ chức
+   - Công nghệ: TypeORM, PostgreSQL
+   - Tính năng chính:
+     * Tạo và quản lý phòng ban
+     * Phân công manager cho phòng ban
+     * Phân công nhân viên vào phòng ban
+     * Thống kê nhân sự theo phòng ban
+     * Hierarchical department structure
+
+D. TRAINING MODULE:
+   - Chức năng: Quản lý đào tạo và phát triển nhân viên
+   - Công nghệ: TypeORM, PostgreSQL, Redis (caching)
+   - Tính năng chính:
+     * Quản lý lộ trình đào tạo (Training Paths)
+     * Quản lý khóa học (Courses)
+     * Đăng ký khóa học (Enrollment)
+     * Theo dõi tiến độ học tập
+     * Gán khóa học cho phòng ban/nhóm nhân viên
+     * Báo cáo hiệu quả đào tạo
+
+E. TASKS MODULE:
+   - Chức năng: Quản lý công việc và nhiệm vụ
+   - Công nghệ: TypeORM, PostgreSQL, Elasticsearch
+   - Tính năng chính:
+     * Tạo và phân công nhiệm vụ
+     * Theo dõi trạng thái (Pending, InProgress, Completed, Rejected)
+     * Deadline management và notifications
+     * Task feedback và đánh giá
+     * Task comments và collaboration
+     * Priority levels và filtering
+     * Task search với Elasticsearch
+
+F. FORUM MODULE:
+   - Chức năng: Diễn đàn trao đổi nội bộ
+   - Công nghệ: TypeORM, PostgreSQL, Redis, Elasticsearch
+   - Tính năng chính:
+     * Bài viết (posts) và bình luận (comments)
+     * Categories và tags
+     * Upvote/downvote system
+     * Comment counter với Redis
+     * Full-text search với Elasticsearch
+     * Rich text content
+     * Notification khi có reply/mention
+
+G. DOCUMENTS MODULE:
+   - Chức năng: Quản lý tài liệu và mẫu văn bản
+   - Công nghệ: TypeORM, PostgreSQL, Elasticsearch
+   - Tính năng chính:
+     * Upload/download tài liệu
+     * Categories và metadata
+     * Document templates
+     * Document generation từ templates
+     * Permission-based access
+     * Full-text search với Elasticsearch
+     * Version tracking
+
+H. NOTIFICATIONS MODULE:
+   - Chức năng: Hệ thống thông báo real-time
+   - Công nghệ: WebSockets (Socket.io), Redis Pub/Sub
+   - Tính năng chính:
+     * Real-time notifications
+     * Notification types (Task, Assignment, Training, General)
+     * Read/unread status tracking
+     * Bulk notifications
+     * Notification count với Redis
+     * WebSocket authentication
+
+I. ATTENDANCE MODULE:
+   - Chức năng: Quản lý điểm danh và nghỉ phép
+   - Công nghệ: TypeORM, PostgreSQL
+   - Tính năng chính:
+     * Check-in/check-out tracking
+     * Leave requests (Annual, Sick, Unpaid)
+     * Approval workflow
+     * Overtime tracking
+     * Attendance statistics
+     * Calendar integration
+
+J. DASHBOARD MODULE:
+   - Chức năng: Thống kê và báo cáo
+   - Công nghệ: TypeORM, Redis, PostgreSQL aggregations
+   - Tính năng chính:
+     * Employee statistics
+     * Department performance
+     * Training effectiveness
+     * Task completion rates
+     * Attendance analysis
+     * Forum activity metrics
+     * Document usage statistics
+     * Real-time metrics với Redis
+
+K. SEARCH MODULE:
+   - Chức năng: Tìm kiếm toàn văn bản
+   - Công nghệ: Elasticsearch
+   - Tính năng chính:
+     * Cross-entity search (tasks, documents, forum posts)
+     * Full-text search với ranking
+     * Fuzzy search và correction
+     * Vietnamese analyzer
+     * Filter by types/properties
+     * Search suggestions
+     * Aggregation results
+
+============================================================
+5. DATABASE SCHEMA
+============================================================
+
+Hệ thống sử dụng PostgreSQL với schema gồm các bảng chính:
+
+A. Core Tables:
+   
+   1. Users
+      - user_id (PK)
+      - cccd
+      - email
+      - password (hashed)
+      - phone
+      - full_name
+      - role (enum: Admin, Employee, TeamLeader, SeniorManager)
+      - department_id (FK -> Departments)
+      - created_at, updated_at
+
+   2. Profiles
+      - profile_id (PK)
+      - user_id (FK -> Users)
+      - date_of_birth
+      - address
+      - experience
+      - skills
+      - avatar_url
+      - updated_at
+
+   3. Departments
+      - department_id (PK)
+      - department_name
+      - manager_id (FK -> Users)
+
+B. Training Tables:
+
+   1. TrainingPaths
+      - training_path_id (PK)
+      - title
+      - description
+      - department_id (FK -> Departments)
+      - duration (enum: ShortTerm, LongTerm)
+      - created_by (FK -> Users)
+      - total_courses
+      - duration_in_weeks
+      - is_active
+      - created_at
+
+   2. TrainingCourses
+      - course_id (PK)
+      - training_path_id (FK -> TrainingPaths)
+      - title
+      - description
+      - type (enum: Online, Offline, Video, Document)
+      - duration_hours
+      - level (enum: beginner, intermediate, advanced)
+      - total_lessons
+      - is_active
+      - created_at
+
+   3. UserCourses
+      - user_course_id (PK)
+      - user_id (FK -> Users)
+      - course_id (FK -> TrainingCourses)
+      - status (enum: NotStarted, InProgress, Completed)
+      - completion_date
+      - score
+
+C. Task Tables:
+
+   1. Tasks
+      - task_id (PK)
+      - title
+      - description
+      - assigned_to (FK -> Users)
+      - assigned_by (FK -> Users)
+      - deadline
+      - status (enum: Pending, InProgress, Completed, Rejected)
+      - score
+      - feedback
+      - created_at, updated_at
+
+D. Forum Tables:
+
+   1. ForumPosts
+      - post_id (PK)
+      - user_id (FK -> Users)
+      - title
+      - content
+      - created_at, updated_at
+
+   2. ForumComments
+      - comment_id (PK)
+      - post_id (FK -> ForumPosts)
+      - user_id (FK -> Users)
+      - content
+      - created_at
+
+E. Document Tables:
+
+   1. Documents
+      - document_id (PK)
+      - title
+      - file_url
+      - category
+      - uploaded_by (FK -> Users)
+      - uploaded_at
+
+F. Attendance Tables:
+
+   1. Attendance
+      - attendance_id (PK)
+      - user_id (FK -> Users)
+      - check_in
+      - check_out
+      - overtime_hours
+      - leave_type (enum: Annual, Sick, Unpaid)
+      - leave_date
+      - status (enum: pending, approved, rejected)
+      - note
+
+G. Notification Tables:
+
+   1. Notifications
+      - notification_id (PK)
+      - user_id (FK -> Users)
+      - title
+      - content
+      - type (enum: Task, Assignment, Training, General)
+      - is_read
+      - created_at
+
+H. Assignment Tables:
+
+   1. Assignments
+      - assignment_id (PK)
+      - course_id (FK -> TrainingCourses)
+      - title
+      - description
+      - max_submissions
+      - deadline
+      - created_at
+
+   2. Submissions
+      - submission_id (PK)
+      - assignment_id (FK -> Assignments)
+      - user_id (FK -> Users)
+      - submission_content
+      - submitted_at
+      - testcase_passed
+      - total_testcases
+
+============================================================
+6. API ENDPOINTS QUAN TRỌNG
+============================================================
+
+A. Authentication APIs:
+   - POST /auth/login - Đăng nhập
+   - POST /auth/register - Đăng ký
+   - POST /auth/forgot-password - Quên mật khẩu
+   - POST /auth/reset-password - Đặt lại mật khẩu
+   - PATCH /auth/change-password - Đổi mật khẩu
+   - POST /auth/login-with-device - Đăng nhập qua thiết bị
+   - POST /auth/logout - Đăng xuất
+
+B. User & Profile APIs:
+   - GET /users - Danh sách users
+   - GET /users/:id - Chi tiết user
+   - POST /users - Tạo user mới
+   - PATCH /users/:id - Cập nhật user
+   - DELETE /users/:id - Xóa user
+   - GET /profiles/me - Profile cá nhân
+   - POST /profiles/me/avatar - Upload avatar
+   - POST /profiles/me/2fa/enable - Bật xác thực 2 yếu tố
+
+C. Department APIs:
+   - GET /departments - Danh sách phòng ban
+   - GET /departments/:id - Chi tiết phòng ban
+   - POST /departments - Tạo phòng ban
+   - PATCH /departments/:id - Cập nhật phòng ban
+   - DELETE /departments/:id - Xóa phòng ban
+
+D. Training APIs:
+   - GET /training/paths - Danh sách lộ trình
+   - GET /training/paths/:id - Chi tiết lộ trình
+   - GET /training/courses - Danh sách khóa học
+   - GET /training/courses/:id - Chi tiết khóa học
+   - POST /user-courses/enroll - Đăng ký khóa học
+   - PATCH /user-courses/progress/:userId/:courseId - Cập nhật tiến độ
+
+E. Task APIs:
+   - GET /tasks - Danh sách nhiệm vụ
+   - GET /tasks/:id - Chi tiết nhiệm vụ
+   - POST /tasks - Tạo nhiệm vụ
+   - PATCH /tasks/:id/status - Cập nhật trạng thái
+   - POST /tasks/:id/feedback - Gửi feedback
+   - GET /tasks/summary/me - Tóm tắt nhiệm vụ
+   - POST /tasks/notify/upcoming-deadlines - Thông báo deadline
+   - POST /tasks/notify/overdue - Thông báo quá hạn
+
+F. Forum APIs:
+   - GET /forum/posts - Danh sách bài viết
+   - GET /forum/posts/:id - Chi tiết bài viết
+   - POST /forum/posts - Tạo bài viết
+   - PATCH /forum/posts/:id - Sửa bài viết
+   - DELETE /forum/posts/:id - Xóa bài viết
+   - GET /forum/posts/:id/comments - Comments của bài viết
+   - POST /forum/comments - Tạo comment
+   - DELETE /forum/comments/:id - Xóa comment
+
+G. Document APIs:
+   - GET /documents - Danh sách tài liệu
+   - GET /documents/categories - Danh sách categories
+   - GET /documents/:id - Chi tiết tài liệu
+   - GET /documents/:id/download - Download tài liệu
+   - GET /documents/templates - Lấy danh sách templates
+   - POST /documents - Upload tài liệu
+   - POST /documents/templates - Tạo template
+   - POST /documents/generate/:templateId - Tạo từ template
+   - PATCH /documents/:id - Cập nhật tài liệu
+   - DELETE /documents/:id - Xóa tài liệu
+   - GET /documents/search - Tìm kiếm tài liệu
+
+H. Notification APIs:
+   - GET /notifications - Danh sách thông báo
+   - GET /notifications/:id - Chi tiết thông báo
+   - POST /notifications - Tạo thông báo
+   - POST /notifications/bulk - Tạo nhiều thông báo
+   - PATCH /notifications/:id/read - Đánh dấu đã đọc
+   - POST /notifications/user/:userId/mark-all-read - Đánh dấu tất cả đã đọc
+   - DELETE /notifications/:id - Xóa thông báo
+   - GET /notifications/unread - Đếm thông báo chưa đọc
+
+I. Search APIs:
+   - GET /search/health - Kiểm tra ES
+   - GET /search/tasks - Tìm kiếm nhiệm vụ
+   - GET /search/documents - Tìm kiếm tài liệu
+   - GET /search/notifications - Tìm kiếm thông báo
+   - GET /search/document-stats - Thống kê tài liệu
+
+J. Dashboard APIs:
+   - GET /dashboard/stats - Thống kê tổng quan
+   - GET /dashboard/attendance-stats - Thống kê điểm danh
+   - GET /dashboard/training-stats - Thống kê đào tạo
+   - GET /dashboard/overview - Tổng quan
+   - GET /dashboard/forum-activity - Hoạt động diễn đàn
+   - GET /dashboard/document-stats - Thống kê tài liệu
+   - GET /dashboard/task-stats - Thống kê nhiệm vụ
+   - GET /dashboard/user-stats - Thống kê người dùng
+   - GET /dashboard/refresh - Làm mới dữ liệu
+   - GET /dashboard/system-logs - Log hệ thống
+
+============================================================
+7. REAL-TIME FEATURES (WEBSOCKET)
+============================================================
+
+A. WebSocket Implementation:
+   - Sử dụng Socket.io để triển khai WebSocket
+   - Gateway chính: NotificationsGateway
+   - Path: /notifications/socket.io
+   - Namespace: notifications
+
+B. Kết nối từ client:
+   ```typescript
+   const socket = io('http://localhost:3000/notifications', {
+     path: '/notifications/socket.io',
+     auth: { token: 'JWT_TOKEN_HERE' }
+   });
+   ```
+
+C. WebSocket Events:
+   - `notification`: Gửi thông báo mới
+   - `notification_read`: Thông báo đã đọc
+   - `all_notifications_read`: Tất cả thông báo đã đọc
+   - `unread_count`: Đếm thông báo chưa đọc
+
+D. WebSocket Authentication:
+   - JWT verification qua socket handshake
+   - User được tự động join vào room: `user-{userId}`
+   - Admin nhận notifications tổng hợp: `admin-notifications`
+
+E. Redis Pub/Sub cho WebSocket:
+   - Sử dụng Redis làm message broker
+   - Đảm bảo notifications hoạt động trên multiple instances
+   - Lưu trữ user online status
+   - Sync unread counters
+
+F. WebSocket Rate Limiting:
+   - Giới hạn số message mỗi phút từ mỗi client
+   - Bảo vệ server khỏi spam/DoS
+
+G. Use Cases:
+   - Notification realtime khi có task mới/deadline
+   - Updates khi có comment mới trên diễn đàn
+   - Notification khi có tài liệu mới được upload
+   - Alert cho admin khi có vấn đề cần xử lý
+   - Online user presence
+
+============================================================
+8. AUTHENTICATION & AUTHORIZATION
+============================================================
+
+A. Phương thức xác thực:
+   - JWT (JSON Web Tokens) là phương thức chính
+   - Access token + Refresh token mechanism
+   - Stateless authentication
+
+B. JWT Implementation:
+   - Secret key: Cấu hình qua environment variable
+   - Token expiration: 1 ngày cho access token
+   - Refresh expiration: 7 ngày cho refresh token
+   - Token payload: userId, role, email
+
+C. Authentication Flow:
+   1. User đăng nhập với email/password
+   2. Server verify credentials
+   3. Server tạo access token + refresh token
+   4. Client lưu trữ tokens
+   5. Client gửi access token trong Authorization header
+   6. Server validate token cho mỗi request
+   7. Khi access token hết hạn, client dùng refresh token
+   8. Server cấp access token mới nếu refresh token hợp lệ
+
+D. Two-Factor Authentication (2FA):
+   - Optional cho users
+   - Time-based One-Time Password (TOTP)
+   - QR code setup
+   - Fallback recovery codes
+
+E. Authorization:
+   - Role-Based Access Control (RBAC)
+   - Guards trong NestJS để bảo vệ routes
+   - Roles: Admin, Employee, TeamLeader, SeniorManager
+   - Custom decorators: @Roles(), @Public()
+
+F. Security Features:
+   - Password hashing với bcrypt
+   - Rate limiting để ngăn brute force
+   - JWT blacklisting cho logout
+   - HTTP Only cookies option
+   - CORS protection
+   - Content Security Policy
+
+============================================================
+9. PERFORMANCE OPTIMIZATIONS
+============================================================
+
+A. Caching Strategy:
+   - Redis làm cache layer
+   - Cache danh sách users/departments
+   - Cache forum posts phổ biến
+   - Cache dashboard statistics
+   - TTL-based và event-based invalidation
+
+B. Database Optimizations:
+   - Indexes cho các trường tìm kiếm thường xuyên
+   - Foreign key constraints để đảm bảo data integrity
+   - Query optimization với EXPLAIN
+   - Connection pooling
+   - Pagination cho large datasets
+
+C. Redis Usage:
+   - Store session data
+   - Cache query results
+   - Rate limiting counters
+   - Comment counters
+   - Unread notification counters
+   - Pub/Sub cho real-time features
+
+D. API Performance:
+   - Response compression
+   - ETags support
+   - Pagination mặc định
+   - Field filtering với query params
+   - Eager loading để tránh N+1 queries
+   - Response transforms cho đúng format
+
+E. Elasticsearch Optimizations:
+   - Bulk indexing cho performance
+   - Custom analyzers cho tiếng Việt
+   - Index settings được tối ưu
+   - Reindex định kỳ để duy trì performance
+   - Search templates cho các query phức tạp
+
+F. Memory Management:
+   - Stream processing cho file uploads/downloads
+   - Eager garbage collection cho large operations
+   - Memory limits cho worker processes
+   - Monitoring với Node.js tools
+
+============================================================
+10. ĐIỂM MẠNH KỸ THUẬT
+============================================================
+
+1. Kiến trúc module hóa giúp dễ dàng mở rộng và bảo trì
+   - Separation of concerns
+   - Loose coupling giữa các components
+   - Dependency injection cho testability
+
+2. Real-time communication với WebSockets
+   - Thông báo ngay lập tức
+   - Presence indicators
+   - Sync cross-device
+
+3. Tìm kiếm hiệu quả với Elasticsearch
+   - Full-text search
+   - Fuzzy matching
+   - Vietnamese language support
+   - Aggregations cho analytics
+
+4. Performance optimization với Redis
+   - Caching giảm load database
+   - In-memory counters
+   - Pub/Sub cho scalability
+   - Rate limiting bảo vệ API
+
+5. Bảo mật nhiều lớp
+   - JWT authentication
+   - Role-based authorization
+   - Rate limiting
+   - Input validation
+   - Content security headers
+
+6. API Documentation đầy đủ
+   - Swagger integration
+   - Interactive testing
+   - Schema validation
+
+7. Logging và monitoring
+   - Structured logging
+   - Error handling
+   - Performance metrics
+   - System health checks
+
+8. Cross-platform compatibility
+   - RESTful API cho multiple clients
+   - WebSocket support trên nhiều nền tảng
+   - File handling cho nhiều file types
+
+9. Testing
+   - Unit tests
+   - Integration tests
+   - E2E tests với Jest
+
+10. DevOps friendliness
+    - Docker support
+    - Environment variables
+    - Multiple environment configurations
+    - PM2 process management
+
+============================================================
+                        END OF DOCUMENT
+============================================================ 

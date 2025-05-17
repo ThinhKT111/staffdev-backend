@@ -21,8 +21,12 @@ export class RateLimitGuard implements CanActivate {
     // Xác định key dựa trên IP hoặc userId
     let key = request.ip || request.headers['x-forwarded-for'] || 'anonymous';
     
-    if (request.user && request.user.userId) {
-      key = `user:${request.user.userId}`;
+    // Kiểm tra cả userId và sub để đảm bảo hoạt động đúng với token JWT
+    if (request.user) {
+      const userId = request.user.userId || request.user.sub;
+      if (userId) {
+        key = `user:${userId}`;
+      }
     }
     
     // Thêm endpoint vào key để tách biệt rate limit

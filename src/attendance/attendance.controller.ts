@@ -14,7 +14,19 @@ export class AttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 
   @Get()
-  findByUser(@Query('userId') userId: string) {
+  findByUser(@Query('userId') userId: string, @Request() req) {
+    // Nếu không có userId trong query, sử dụng người dùng hiện tại
+    if (!userId) {
+      const currentUserId = req.user.userId || req.user.sub;
+      const userIdNumber = Number(currentUserId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      return this.attendanceService.findByUser(userIdNumber);
+    }
+    
     return this.attendanceService.findByUser(+userId);
   }
 
@@ -28,7 +40,14 @@ export class AttendanceController {
   checkIn(@Body() checkInDto: CheckInDto, @Request() req) {
     // Use current user if userId not provided
     if (!checkInDto.userId) {
-      checkInDto.userId = req.user.userId;
+      const userId = req.user.userId || req.user.sub;
+      const userIdNumber = Number(userId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      checkInDto.userId = userIdNumber;
     }
     
     return this.attendanceService.checkIn(checkInDto);
@@ -37,18 +56,35 @@ export class AttendanceController {
   @Post('check-out')
   checkOut(@Body('userId') userId: number, @Request() req) {
     // Use current user if userId not provided
-    const userIdToUse = userId || req.user.userId;
-    return this.attendanceService.checkOut(userIdToUse);
+    if (!userId) {
+      const currentUserId = req.user.userId || req.user.sub;
+      const userIdNumber = Number(currentUserId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      return this.attendanceService.checkOut(userIdNumber);
+    }
+    
+    return this.attendanceService.checkOut(userId);
   }
 
   @Post('leave')
-  requestLeave(@Body() leaveDto: RequestLeaveDto, @Request() req) {
+  requestLeave(@Body() requestLeaveDto: RequestLeaveDto, @Request() req) {
     // Use current user if userId not provided
-    if (!leaveDto.userId) {
-      leaveDto.userId = req.user.userId;
+    if (!requestLeaveDto.userId) {
+      const userId = req.user.userId || req.user.sub;
+      const userIdNumber = Number(userId);
+      
+      if (isNaN(userIdNumber)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+      
+      requestLeaveDto.userId = userIdNumber;
     }
     
-    return this.attendanceService.requestLeave(leaveDto);
+    return this.attendanceService.requestLeave(requestLeaveDto);
   }
 
   @Post('leave/:id/approve')
@@ -73,7 +109,19 @@ export class AttendanceController {
     @Request() req
   ) {
     // Use current user if userId not provided
-    const userIdToUse = userId ? +userId : req.user.userId;
+    let userIdToUse;
+    
+    if (userId) {
+      userIdToUse = +userId;
+    } else {
+      const currentUserId = req.user.userId || req.user.sub;
+      userIdToUse = Number(currentUserId);
+      
+      if (isNaN(userIdToUse)) {
+        throw new Error('User ID không phải là số hợp lệ');
+      }
+    }
+    
     const currentDate = new Date();
     const monthToUse = month ? +month : currentDate.getMonth() + 1;
     const yearToUse = year ? +year : currentDate.getFullYear();

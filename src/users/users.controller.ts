@@ -1,5 +1,5 @@
 // src/users/users.controller.ts
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -18,6 +18,19 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   findAll() {
     return this.usersService.findAll();
+  }
+
+  @Get('me')
+  findMe(@Request() req) {
+    // Lấy userId từ JWT payload - có thể là req.user.userId hoặc req.user.sub
+    const userId = req.user.userId || req.user.sub;
+    
+    // Đảm bảo userId là số nguyên hợp lệ
+    if (!userId || isNaN(+userId)) {
+      throw new Error('User ID không hợp lệ');
+    }
+    
+    return this.usersService.findOne(+userId);
   }
 
   @Get(':id')

@@ -1,14 +1,22 @@
 // src/tasks/dto/create-task.dto.ts
-import { IsNotEmpty, IsString, IsNumber, IsOptional, IsDateString } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsOptional, IsDate, IsEnum } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export enum TaskStatus {
+  PENDING = 'Pending',
+  IN_PROGRESS = 'InProgress',
+  COMPLETED = 'Completed',
+  REJECTED = 'Rejected',
+}
 
 export class CreateTaskDto {
   @IsNotEmpty()
   @IsString()
   title: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  description: string;
+  description?: string;
 
   @IsNotEmpty()
   @IsNumber()
@@ -18,11 +26,12 @@ export class CreateTaskDto {
   @IsNumber()
   assignedBy: number;
 
-  @IsNotEmpty()
-  @IsDateString()
-  deadline: string;
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  deadline?: Date;
 
   @IsOptional()
-  @IsString()
-  status?: 'Pending' | 'InProgress' | 'Completed' | 'Rejected';
+  @IsEnum(TaskStatus)
+  status?: TaskStatus;
 }

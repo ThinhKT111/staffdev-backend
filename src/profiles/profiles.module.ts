@@ -5,10 +5,11 @@ import { ProfilesService } from './profiles.service';
 import { ProfilesController } from './profiles.controller';
 import { Profile } from '../entities/profile.entity';
 import { User } from '../entities/user.entity';
+import { FileUploadService } from '../shared/file-upload.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Profile, User])],
-  providers: [ProfilesService],
+  providers: [ProfilesService, FileUploadService],
   controllers: [ProfilesController],
   exports: [ProfilesService],
 })
